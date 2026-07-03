@@ -1,0 +1,1073 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Flow Simulation — Rework Backwash</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0;
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: #f4f6f8; color: #1f2a37;
+  }
+  header { padding: 14px 22px 6px; }
+  header h1 { margin: 0; font-size: 1.4em; }
+  header .sub { color: #5d6b7a; margin-top: 2px; font-size: 0.95em; }
+
+  #panel {
+    display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: end;
+    margin: 10px 16px; padding: 12px 14px;
+    background: #fff; border: 1px solid #e3e8ee; border-radius: 8px;
+  }
+  #panel label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #5d6b7a; font-weight: 500; }
+  #panel input, #panel select {
+    padding: 6px 8px; border: 1px solid #cfd6de; border-radius: 5px;
+    background: #fff; font-size: 13px; min-width: 110px;
+  }
+  #panel input:focus, #panel select:focus { outline: 2px solid #6aa3f0; outline-offset: -1px; border-color: #6aa3f0; }
+  #panel .spacer { flex: 1; }
+  #panel .buttons { display: flex; gap: 6px; }
+  #panel button {
+    padding: 7px 14px; border-radius: 5px; border: 1px solid #4a90e2; background: #4a90e2; color: #fff;
+    font-weight: 500; cursor: pointer; font-size: 13px;
+  }
+  #panel button.secondary { background: #fff; color: #4a90e2; }
+  #panel button:hover { filter: brightness(1.05); }
+
+  #statusBar {
+    margin: 0 16px 10px; padding: 8px 14px; border-radius: 6px;
+    display: flex; gap: 18px; align-items: center; font-size: 13px;
+  }
+  .status-normal { background: #e3f7ec; border: 1px solid #9dd9b7; color: #1c5b34; }
+  .status-balking { background: #fff3d9; border: 1px solid #e8c275; color: #7a5a14; }
+  .status-collapse { background: #fbe1dd; border: 1px solid #e89687; color: #7a2c1b; }
+  #statusBar .pill { background: rgba(0,0,0,0.06); padding: 2px 8px; border-radius: 10px; font-weight: 600; }
+
+  #main { display: grid; grid-template-columns: 1fr 320px; gap: 12px; margin: 0 16px 12px; }
+  @media (max-width: 1100px) { #main { grid-template-columns: 1fr; } }
+
+  .card { background: #fff; border: 1px solid #e3e8ee; border-radius: 8px; }
+  #canvasWrap { padding: 6px; }
+  #simCanvas { display: block; width: 100%; height: auto; }
+
+  #side { display: flex; flex-direction: column; gap: 12px; }
+  .metric-card { padding: 12px 14px; }
+  .metric-card h3 {
+    margin: 0 0 8px; font-size: 12px; letter-spacing: 0.05em; text-transform: uppercase;
+    color: #5d6b7a; border-bottom: 1px solid #eef1f5; padding-bottom: 6px;
+  }
+  .metric-card .row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 13px; }
+  .metric-card .row b { font-variant-numeric: tabular-nums; color: #1f2a37; }
+  .metric-card .row.muted { color: #7c8794; }
+
+  #chartCard { padding: 8px; }
+  #chartCard canvas { display: block; width: 100%; height: 180px; }
+  #chartCard .legend { display: flex; gap: 14px; justify-content: center; font-size: 12px; color: #5d6b7a; margin-top: 4px; }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: middle; margin-right: 4px; }
+
+  details { margin: 0 16px 24px; padding: 10px 14px; background: #fff; border: 1px solid #e3e8ee; border-radius: 8px; }
+  details summary { cursor: pointer; font-weight: 600; color: #1f2a37; }
+  details p, details ul { color: #4a5662; margin: 8px 0; }
+  details ul { padding-left: 22px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Flow Simulation &mdash; the rework backwash effect</h1>
+  <div class="sub">One process box. Arrivals come from the left; defects loop back through the same door. Watch what 33% rework does to throughput &mdash; not 33% slower, but a cliff.</div>
+</header>
+
+<div id="panel">
+  <label>Arrival mode
+    <select id="arrivalMode">
+      <option value="poisson" selected>Poisson</option>
+      <option value="deterministic">Deterministic</option>
+    </select>
+  </label>
+  <label>Arrival rate (/day)
+    <input id="arrivalRate" type="number" min="0" step="0.1" value="9">
+  </label>
+  <label>Process rate (/day)
+    <input id="processRate" type="number" min="1" step="1" value="10">
+  </label>
+  <label>Defect rate (0&ndash;1)
+    <input id="defectRate" type="number" min="0" max="1" step="0.01" value="0.10">
+  </label>
+  <label>Rework policy
+    <select id="reworkPolicy">
+      <option value="priority" selected>Defect-first (rework cuts the line)</option>
+      <option value="proportional">Proportional (mix ratio)</option>
+      <option value="1perN">1 rework per N new</option>
+    </select>
+  </label>
+  <label>Mix / N
+    <input id="mixParam" type="number" min="0" step="0.05" value="0.30">
+  </label>
+  <label>Speed (ms/day)
+    <input id="dayMs" type="number" min="60" step="20" value="1000">
+  </label>
+  <div class="spacer"></div>
+  <div class="buttons">
+    <button id="startBtn">Start</button>
+    <button id="pauseBtn" class="secondary">Pause</button>
+    <button id="resetBtn" class="secondary">Reset</button>
+  </div>
+</div>
+
+<div id="statusBar" class="status-normal">
+  <span id="statusText">Idle &mdash; press Start</span>
+  <span class="pill">Day <span id="dayPill">0</span></span>
+  <span class="pill">Utilization <span id="utilPill">0%</span></span>
+  <span class="pill">Rework load <span id="reworkPill">0%</span></span>
+</div>
+
+<div id="main">
+  <div class="card" id="canvasWrap">
+    <canvas id="simCanvas" width="1280" height="640"></canvas>
+  </div>
+  <div id="side">
+    <div class="card metric-card">
+      <h3>Throughput</h3>
+      <div class="row"><span>Day</span><b id="mDay">0</b></div>
+      <div class="row"><span>Shipped (total)</span><b id="mShipped">0</b></div>
+      <div class="row"><span>Shipped / day (rolling)</span><b id="mTput">&mdash;</b></div>
+      <div class="row muted"><span>Sustainable rate&nbsp;&dagger;</span><b id="mCeiling">&mdash;</b></div>
+      <div class="row muted"><span>Drag vs sustainable</span><b id="mLost">&mdash;</b></div>
+    </div>
+    <div class="card metric-card">
+      <h3>Lead time</h3>
+      <div class="row"><span>Avg lead time (days)</span><b id="mLead">&mdash;</b></div>
+      <div class="row"><span>p85 lead time</span><b id="mLeadP85">&mdash;</b></div>
+      <div class="row"><span>Worst</span><b id="mLeadMax">&mdash;</b></div>
+    </div>
+    <div class="card metric-card">
+      <h3>Queues &amp; WIP</h3>
+      <div class="row"><span>Product backlog</span><b id="mBacklog">0</b></div>
+      <div class="row"><span>Defect queue</span><b id="mDefects">0</b></div>
+      <div class="row"><span>In process</span><b id="mInProc">0</b></div>
+      <div class="row"><span>Total WIP</span><b id="mWip">0</b></div>
+    </div>
+    <div class="card metric-card">
+      <h3>Defects</h3>
+      <div class="row"><span>Created (cumulative)</span><b id="mDefCreated">0</b></div>
+      <div class="row"><span>Rework cycles (cumulative)</span><b id="mReworkDone">0</b></div>
+      <div class="row muted"><span>Avg rework / shipped item</span><b id="mReworkPer">0.00</b></div>
+    </div>
+    <div class="card" id="chartCard">
+      <canvas id="chartCanvas" width="640" height="360"></canvas>
+      <div class="legend">
+        <span><span class="swatch" style="background:#2f7d39"></span>Cumulative shipped</span>
+        <span><span class="swatch" style="background:#aaa"></span>Counterfactual ceiling</span>
+        <span><span class="swatch" style="background:#cc4a3a"></span>Defect queue depth</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<details open>
+  <summary>What this is showing &mdash; and why "33% rework" doesn't mean "33% slower"</summary>
+  <p>This is a single-station queueing model with feedback. Items arrive at rate <b>&lambda;</b>, the team works at rate <b>&mu;</b>, and a fraction <b>d</b> of completed items come back to be reworked.</p>
+  <p>Because rework re-enters at the same door as new work, the effective arrival rate the team must serve is <b>&lambda;<sub>eff</sub> = &lambda; / (1 &minus; d)</b>. The team's utilization is <b>&rho; = &lambda;<sub>eff</sub> / &mu;</b>. As &rho; approaches 1, queues grow without bound &mdash; the bottleneck collapses.</p>
+  <ul>
+    <li>&lambda;=9, &mu;=10, d=0 &rarr; &rho; = 0.90 (comfortable)</li>
+    <li>&lambda;=9, &mu;=10, d=0.10 &rarr; &rho; = 1.00 (on the edge)</li>
+    <li>&lambda;=9, &mu;=10, d=0.33 &rarr; &rho; = 1.34 (system can't keep up &mdash; queues grow forever)</li>
+  </ul>
+  <p>&dagger; <b>Sustainable rate</b> = <code>min(&lambda;, &mu;&middot;(1&minus;d))</code> &mdash; the most the team can ship per day in steady state. If &lambda; is low enough that arrivals are the bottleneck, this equals &lambda;. If rework is eating capacity, it's lower. The <b>drag</b> stat compares actual rolling throughput to this number.</p>
+  <p><b>Symbols inside the dots</b> (1&hellip;9, 0, A&hellip;Z, a&hellip;z) are item IDs &mdash; lets you track an individual unit of work through the system. A white ring around a dot means it has been reworked at least once.</p>
+</details>
+
+<script>
+"use strict";
+
+// ===================================================================
+// LAYOUT
+// ===================================================================
+const W = 1280, H = 640;
+// All horizontal flow is on y=380. Vertical tracks are SEPARATED so each
+// arrow has its own column and there's no visual backflow on shared lines.
+const layout = {
+  arrivalStart: { x:  30, y: 380 },
+  divertBranch: { x: 340, y: 380 },  // where ARRIVING ends; either continue right or turn up
+  door:         { x: 380, y: 380 },  // visual junction (and where REWORK rejoins main flow)
+  pullJoin:     { x: 430, y: 380 },  // where PULL rejoins the main flow
+  processIn:    { x: 600, y: 380 },
+  processOut:   { x: 960, y: 380 },
+  shipTurn:     { x:1180, y: 380 },
+  shipTop:      { x:1180, y: 130 },
+  defectTurn1:  { x:1080, y: 380 },
+  defectTurn2:  { x:1080, y: 520 },
+  defectBoxRight:{x: 450, y: 520 },
+
+  // Connection points on the queue boxes (so vertical tracks are clearly separated)
+  divertEnter:  { x: 340, y: 200 },  // bottom of backlog, left side
+  pullExit:     { x: 430, y: 200 },  // bottom of backlog, right side
+  defectExit:   { x: 380, y: 440 },  // top of defect queue (vertical up, into door)
+
+  backlogBox:  { x: 250, y:  60, w: 200, h: 140 },
+  processBox:  { x: 560, y: 280, w: 400, h: 200 },
+  defectBox:   { x: 250, y: 440, w: 200, h: 140 },
+  shippedBox:  { x: 1080, y: 60, w: 200, h: 140 },
+};
+
+// Polylines for each transit phase (start -> end). Each vertical column is
+// one-way: divert up at x=340, pull down at x=430, rework up at x=380.
+const paths = {
+  ARRIVING:    [layout.arrivalStart, layout.divertBranch],
+  ENTERING:    [layout.divertBranch, layout.processIn],
+  DIVERTING:   [layout.divertBranch, layout.divertEnter],
+  PULLING:     [layout.pullExit, layout.pullJoin, layout.processIn],
+  SHIPPING:    [layout.processOut, layout.shipTurn, layout.shipTop],
+  DEFECTING:   [layout.processOut, layout.defectTurn1, layout.defectTurn2, layout.defectBoxRight],
+  REWORKING:   [layout.defectExit, layout.door, layout.processIn],
+};
+
+// ===================================================================
+// HELPERS
+// ===================================================================
+function poissonSample(lambda) {
+  if (lambda <= 0) return 0;
+  // Knuth
+  const L = Math.exp(-lambda);
+  let k = 0, p = 1;
+  do { k++; p *= Math.random(); } while (p > L);
+  return k - 1;
+}
+
+function lerp(a, b, t) { return a + (b - a) * t; }
+
+function polylineLength(pts) {
+  let L = 0;
+  for (let i = 1; i < pts.length; i++) {
+    L += Math.hypot(pts[i].x - pts[i-1].x, pts[i].y - pts[i-1].y);
+  }
+  return L;
+}
+
+function pointAlongPolyline(pts, t) {
+  // t in [0,1]
+  if (t <= 0) return { x: pts[0].x, y: pts[0].y };
+  if (t >= 1) return { x: pts[pts.length-1].x, y: pts[pts.length-1].y };
+  const total = polylineLength(pts);
+  let target = t * total;
+  for (let i = 1; i < pts.length; i++) {
+    const seg = Math.hypot(pts[i].x - pts[i-1].x, pts[i].y - pts[i-1].y);
+    if (target <= seg) {
+      const f = target / seg;
+      return { x: lerp(pts[i-1].x, pts[i].x, f), y: lerp(pts[i-1].y, pts[i].y, f) };
+    }
+    target -= seg;
+  }
+  return { x: pts[pts.length-1].x, y: pts[pts.length-1].y };
+}
+
+function percentile(arr, p) {
+  if (arr.length === 0) return null;
+  const sorted = [...arr].sort((a,b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.floor(p * sorted.length));
+  return sorted[idx];
+}
+
+// ===================================================================
+// SIM STATE
+// ===================================================================
+let state;
+function freshState() {
+  return {
+    day: 0,
+    running: false,
+    lastTickMs: 0,
+    items: new Map(),
+    nextId: 1,
+
+    // Queues (arrays of item ids in FIFO order)
+    backlog: [],
+    defectQueue: [],
+    inProcess: [],
+    shipped: [],
+
+    // Stats
+    totalShipped: 0,
+    totalDefectsCreated: 0,
+    totalReworkCycles: 0,
+    leadTimes: [],
+    dailyShipped: [],     // shipped count per day
+    history: {            // for chart
+      day: [], shipped: [], defects: [], ceiling: [],
+    },
+
+    // For "items arriving at door this tick", we track items in ARRIVING transit
+    // and they get admitted when they reach the door.
+  };
+}
+
+// Labels: 1-9, 0, A-Z, a-z (61 unique chars before recycling)
+const LABEL_CHARS = "1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+
+function makeItem() {
+  const id = state.nextId++;
+  const item = {
+    id,
+    label: LABEL_CHARS[id % LABEL_CHARS.length],
+    color: "#9aa6b2",   // gray initially
+    phase: "ARRIVING",
+    phaseStartMs: performance.now(),
+    fromPos: { ...layout.arrivalStart },
+    toPos:   { ...layout.divertBranch },
+    path: paths.ARRIVING,
+    parkedPos: null,
+    createdDay: state.day,
+    reworkCount: 0,
+    // Persistent y-jitter so simultaneous items render as distinct dots
+    yJitter: (Math.random() - 0.5) * 28,
+    xJitter: (Math.random() - 0.5) * 14,
+  };
+  state.items.set(id, item);
+  return item;
+}
+
+// Set an item into a transit phase. The new path leads from the item's
+// CURRENT visual position (whether parked or mid-tween) so transitions are
+// always visually smooth — no teleport.
+function setTransit(item, phaseName) {
+  let currentPos = null;
+  if (item.path) {
+    // mid-tween: figure out where the item actually is right now
+    const dur = item.tweenDurationMs || 1000;
+    const t = Math.max(0, Math.min(1, (performance.now() - item.phaseStartMs) / dur));
+    const p = pointAlongPolyline(item.path, t);
+    currentPos = { x: p.x, y: p.y };
+  } else if (item.parkedPos) {
+    currentPos = { x: item.parkedPos.x, y: item.parkedPos.y };
+  }
+  const base = paths[phaseName];
+  item.phase = phaseName;
+  item.path = currentPos ? [currentPos, ...base] : base;
+  item.fromPos = item.path[0];
+  item.toPos = item.path[item.path.length - 1];
+  item.phaseStartMs = performance.now();
+  item.parkedPos = null;
+  item.tweenDurationMs = null;  // caller may override
+}
+
+// Park item in a queue slot. Stack within the box.
+function parkInBox(item, phaseName, box, indexInQueue) {
+  item.phase = phaseName;
+  item.path = null;
+  // Stack: grid 6 across, rows of ~20px
+  const cols = 6;
+  const cellW = 28, cellH = 22;
+  const col = indexInQueue % cols;
+  const row = Math.floor(indexInQueue / cols);
+  const x = box.x + 18 + col * cellW;
+  const y = box.y + 30 + row * cellH;
+  item.parkedPos = { x, y };
+  item.phaseStartMs = performance.now();
+  item.fromPos = item.parkedPos;
+  item.toPos = item.parkedPos;
+}
+
+function parkInProcess(item, indexInQueue) {
+  const box = layout.processBox;
+  const cols = 8;
+  const cellW = 42, cellH = 32;
+  const col = indexInQueue % cols;
+  const row = Math.floor(indexInQueue / cols);
+  const x = box.x + 30 + col * cellW;
+  const y = box.y + 40 + row * cellH;
+  item.phase = "IN_PROCESS";
+  item.path = null;
+  item.parkedPos = { x, y };
+  item.phaseStartMs = performance.now();
+  item.fromPos = item.parkedPos;
+  item.toPos = item.parkedPos;
+}
+
+function parkInShipped(item, indexInQueue) {
+  const box = layout.shippedBox;
+  const cols = 6, cellW = 28, cellH = 22;
+  const col = indexInQueue % cols;
+  const row = Math.floor(indexInQueue / cols);
+  // Cap visual stacking; older items just sit in same last slot
+  const cappedRow = Math.min(row, 4);
+  const x = box.x + 18 + col * cellW;
+  const y = box.y + 30 + cappedRow * cellH;
+  item.phase = "IN_SHIPPED";
+  item.path = null;
+  item.parkedPos = { x, y };
+  item.phaseStartMs = performance.now();
+  item.fromPos = item.parkedPos;
+  item.toPos = item.parkedPos;
+}
+
+// ===================================================================
+// SIMULATION TICK
+// ===================================================================
+function readParams() {
+  return {
+    arrivalMode: document.getElementById("arrivalMode").value,
+    arrivalRate: Math.max(0, parseFloat(document.getElementById("arrivalRate").value) || 0),
+    processRate: Math.max(1, Math.round(parseFloat(document.getElementById("processRate").value) || 1)),
+    defectRate: Math.max(0, Math.min(1, parseFloat(document.getElementById("defectRate").value) || 0)),
+    reworkPolicy: document.getElementById("reworkPolicy").value,
+    mixParam: Math.max(0, parseFloat(document.getElementById("mixParam").value) || 0),
+    dayMs: Math.max(60, parseInt(document.getElementById("dayMs").value) || 400),
+  };
+}
+
+// EVENT-DRIVEN MODEL:
+//   - simTick fires once per "day" (every dayMs ms). It handles end-of-day
+//     events (items in Process ship), start-of-day events (pull from PBL),
+//     and spawns the day's arrivals with staggered times across the day.
+//   - checkItemTransitions runs every frame. When an item's tween reaches
+//     t=1, its phase transition fires — admission decision (ARRIVING done),
+//     park-into-process (ENTERING/PULLING/REWORKING done), park-into-queue
+//     (DIVERTING/DEFECTING done), or count-as-shipped (SHIPPING done).
+//   - state.inProcess always holds every item logically occupying a Process
+//     slot, even while it's still tweening in. That's why slot-count checks
+//     at the door correctly reflect committed capacity.
+//   - state.backlog always holds every item logically in the backlog,
+//     including items still tweening toward the box.
+function simTick(P) {
+  let shippedThisTick = 0;
+
+  // 1. END OF DAY: every item currently parked IN_PROCESS completes its work
+  //    and ships (or defects). Items still in-flight TO Process (ENTERING,
+  //    PULLING, REWORKING) stay where they are — they'll arrive in Process
+  //    during the next day and ship the day after.
+  const completing = state.inProcess.filter(id => {
+    const it = state.items.get(id);
+    return it && it.phase === "IN_PROCESS";
+  });
+  for (const id of completing) {
+    const idx = state.inProcess.indexOf(id);
+    if (idx >= 0) state.inProcess.splice(idx, 1);
+    const item = state.items.get(id);
+    if (Math.random() < P.defectRate) {
+      item.color = "#cc4a3a";
+      item.reworkCount++;
+      state.totalDefectsCreated++;
+      setTransit(item, "DEFECTING");
+      item.tweenDurationMs = 0.4 * P.dayMs;
+    } else {
+      item.color = "#2f7d39";
+      setTransit(item, "SHIPPING");
+      item.tweenDurationMs = 0.5 * P.dayMs;
+      // Count this as a ship NOW (work completed at tick boundary). The
+      // SHIPPING animation is visual-only; the throughput tally happens here.
+      state.totalShipped++;
+      shippedThisTick++;
+      state.leadTimes.push(state.day - item.createdDay);
+      if (state.leadTimes.length > 500) state.leadTimes.shift();
+    }
+  }
+
+  // 2. START OF DAY: with Process slots now (mostly) freed, pull from backlog
+  //    FIFO. Only items actually parked in the backlog box are eligible —
+  //    items still in DIVERTING transit haven't arrived yet.
+  const capacity = P.processRate;
+  let slotsAvailable = Math.max(0, capacity - state.inProcess.length);
+
+  // 2a. Rework pull from defect queue (policy-controlled).
+  let reworkSlots = 0;
+  const eligibleDefects = state.defectQueue.filter(id => state.items.get(id)?.phase === "IN_DEFECT_QUEUE");
+  if (eligibleDefects.length > 0 && slotsAvailable > 0) {
+    if (P.reworkPolicy === "priority") {
+      reworkSlots = Math.min(eligibleDefects.length, slotsAvailable);
+    } else if (P.reworkPolicy === "proportional") {
+      let rs = 0;
+      for (let i = 0; i < slotsAvailable && rs < eligibleDefects.length; i++) {
+        if (Math.random() < P.mixParam) rs++;
+      }
+      reworkSlots = rs;
+    } else if (P.reworkPolicy === "1perN") {
+      const N = Math.max(1, P.mixParam);
+      reworkSlots = Math.min(eligibleDefects.length, Math.max(1, Math.floor(slotsAvailable / (N + 1))));
+    }
+  }
+  for (let i = 0; i < reworkSlots; i++) {
+    const id = eligibleDefects[i];
+    const dIdx = state.defectQueue.indexOf(id);
+    if (dIdx >= 0) state.defectQueue.splice(dIdx, 1);
+    const it = state.items.get(id);
+    setTransit(it, "REWORKING");
+    // Fast animation: rework items must clear the defect queue visually before
+    // fresh items arrive at the door, or the strict-FIFO rule sees the queue
+    // as non-empty when it's logically empty.
+    it.tweenDurationMs = 0.05 * P.dayMs;
+    state.inProcess.push(id);
+  }
+  slotsAvailable -= reworkSlots;
+
+  // 2b. Backlog pull (FIFO of items actually parked in the box).
+  const eligibleBacklog = state.backlog.filter(id => state.items.get(id)?.phase === "IN_BACKLOG");
+  const pullCount = Math.min(slotsAvailable, eligibleBacklog.length);
+  for (let i = 0; i < pullCount; i++) {
+    const id = eligibleBacklog[i];
+    const bIdx = state.backlog.indexOf(id);
+    if (bIdx >= 0) state.backlog.splice(bIdx, 1);
+    const it = state.items.get(id);
+    setTransit(it, "PULLING");
+    // Same reason: PBL must be visually empty before the first fresh item
+    // reaches the door (which happens around 1/(N+1) of the day).
+    it.tweenDurationMs = 0.05 * P.dayMs;
+    state.inProcess.push(id);
+  }
+
+  // 3. SPAWN THIS DAY'S ARRIVALS. Each item arrives at the door at a different
+  //    fraction of the day — item i of N arrives at (i+1)/(N+1) of the day.
+  //    Admission decision fires (event-driven) when each one reaches the door.
+  let arrivals;
+  if (P.arrivalMode === "deterministic") {
+    arrivals = Math.round(P.arrivalRate);
+  } else {
+    arrivals = poissonSample(P.arrivalRate);
+  }
+  const tickStart = performance.now();
+  for (let i = 0; i < arrivals; i++) {
+    const item = makeItem();
+    item.phaseStartMs = tickStart;
+    item.tweenDurationMs = ((i + 1) / (arrivals + 1)) * P.dayMs;
+  }
+
+  // 4. RE-PARK already-parked items into their (possibly shifted) slot positions.
+  state.backlog.forEach((id, idx) => {
+    const it = state.items.get(id);
+    if (it && it.phase === "IN_BACKLOG") parkInBox(it, "IN_BACKLOG", layout.backlogBox, idx);
+  });
+  state.defectQueue.forEach((id, idx) => {
+    const it = state.items.get(id);
+    if (it && it.phase === "IN_DEFECT_QUEUE") parkInBox(it, "IN_DEFECT_QUEUE", layout.defectBox, idx);
+  });
+  state.inProcess.forEach((id, idx) => {
+    const it = state.items.get(id);
+    if (it && it.phase === "IN_PROCESS") parkInProcess(it, idx);
+  });
+  while (state.shipped.length > 80) {
+    const oldId = state.shipped.shift();
+    state.items.delete(oldId);
+  }
+  state.shipped.forEach((id, idx) => {
+    const it = state.items.get(id);
+    if (it && it.phase === "IN_SHIPPED") parkInShipped(it, idx);
+  });
+
+  state.dailyShipped.push(shippedThisTick);
+  if (state.dailyShipped.length > 200) state.dailyShipped.shift();
+
+  // 5. Chart history.
+  state.history.day.push(state.day);
+  state.history.shipped.push(state.totalShipped);
+  state.history.defects.push(state.defectQueue.length);
+  const ceilingPerDay = Math.min(P.arrivalRate, P.processRate);
+  const prevCeiling = state.history.ceiling.length === 0 ? 0 : state.history.ceiling[state.history.ceiling.length - 1];
+  state.history.ceiling.push(prevCeiling + ceilingPerDay);
+  if (state.history.day.length > 400) {
+    state.history.day.shift();
+    state.history.shipped.shift();
+    state.history.defects.shift();
+    state.history.ceiling.shift();
+  }
+
+  state.day++;
+
+  // Balking = backlog has something OR there's an item currently in transit to backlog.
+  const balking = state.backlog.length > 0 ||
+    Array.from(state.items.values()).some(it => it.phase === "DIVERTING");
+  return { balking, capacity, reworkSlots, admittedAtDoor: 0, pulledFromBacklog: pullCount };
+}
+
+// EVENT-DRIVEN per-frame transition checks. Runs every RAF frame, before
+// rendering. Whenever an item's tween completes (t >= 1), fire its phase
+// transition immediately — admission decisions happen at the moment the item
+// reaches the door, not at tick boundaries.
+function checkItemTransitions(now, P) {
+  for (const item of state.items.values()) {
+    if (!item.path) continue;  // parked items have no path; skip
+    const dur = item.tweenDurationMs || P.dayMs;
+    if ((now - item.phaseStartMs) >= dur) {
+      handleTransitComplete(item, P);
+    }
+  }
+}
+
+function handleTransitComplete(item, P) {
+  switch (item.phase) {
+    case "ARRIVING": {
+      // Reached door. Strict FIFO admission:
+      //   admit ONLY IF (Process has open slots) AND (PBL is empty).
+      // If anything is in PBL, fresh items join the back of the line — no
+      // bypassing. PBL count here = items actually parked in the box
+      // (DIVERTING items in flight aren't counted; they're added at completion).
+      const slotsUsed = state.inProcess.length;
+      const backlogEmpty = state.backlog.length === 0;
+      if (slotsUsed < P.processRate && backlogEmpty) {
+        setTransit(item, "ENTERING");
+        item.tweenDurationMs = 0.15 * P.dayMs;
+        state.inProcess.push(item.id);
+      } else {
+        setTransit(item, "DIVERTING");
+        item.tweenDurationMs = 0.2 * P.dayMs;
+        // NOTE: do NOT push to state.backlog here. The item is in flight to
+        // PBL, not yet IN_BACKLOG. It joins state.backlog when DIVERTING
+        // completes. Keeps state.backlog as the single source of truth for
+        // "what's actually in the queue."
+      }
+      break;
+    }
+    case "ENTERING":
+    case "PULLING":
+    case "REWORKING": {
+      // Reached Process slot. Park in grid.
+      const idx = state.inProcess.indexOf(item.id);
+      parkInProcess(item, idx >= 0 ? idx : state.inProcess.length);
+      break;
+    }
+    case "DIVERTING": {
+      // Reached backlog box. NOW it counts as IN_BACKLOG — add to state.backlog
+      // and park in stack. This is the moment "in PBL" becomes true logically.
+      state.backlog.push(item.id);
+      parkInBox(item, "IN_BACKLOG", layout.backlogBox, state.backlog.length - 1);
+      break;
+    }
+    case "SHIPPING": {
+      // Reached Shipped box. Park. (Throughput was already counted at simTick.)
+      state.shipped.push(item.id);
+      parkInShipped(item, state.shipped.length - 1);
+      break;
+    }
+    case "DEFECTING": {
+      // Reached defect queue. Park.
+      state.defectQueue.push(item.id);
+      parkInBox(item, "IN_DEFECT_QUEUE", layout.defectBox, state.defectQueue.length - 1);
+      break;
+    }
+  }
+}
+
+// ===================================================================
+// RENDERING
+// ===================================================================
+const canvas = document.getElementById("simCanvas");
+const ctx = canvas.getContext("2d");
+
+function fitCanvas() {
+  // Keep internal resolution at W,H. CSS scales it.
+  canvas.width = W;
+  canvas.height = H;
+}
+
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function drawArrow(from, to, color, width=2) {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.beginPath();
+  ctx.moveTo(from.x, from.y);
+  ctx.lineTo(to.x, to.y);
+  ctx.stroke();
+  // arrowhead
+  const ang = Math.atan2(to.y - from.y, to.x - from.x);
+  const h = 8;
+  ctx.beginPath();
+  ctx.moveTo(to.x, to.y);
+  ctx.lineTo(to.x - h * Math.cos(ang - Math.PI/7), to.y - h * Math.sin(ang - Math.PI/7));
+  ctx.lineTo(to.x - h * Math.cos(ang + Math.PI/7), to.y - h * Math.sin(ang + Math.PI/7));
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+
+function drawPolyArrow(pts, color, width=2) {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+  ctx.stroke();
+  // arrowhead at end
+  const a = pts[pts.length - 2], b = pts[pts.length - 1];
+  const ang = Math.atan2(b.y - a.y, b.x - a.x);
+  const h = 9;
+  ctx.beginPath();
+  ctx.moveTo(b.x, b.y);
+  ctx.lineTo(b.x - h * Math.cos(ang - Math.PI/7), b.y - h * Math.sin(ang - Math.PI/7));
+  ctx.lineTo(b.x - h * Math.cos(ang + Math.PI/7), b.y - h * Math.sin(ang + Math.PI/7));
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+
+function drawBox(box, title, countText, fill, stroke) {
+  ctx.fillStyle = fill;
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = 1.5;
+  roundRect(box.x, box.y, box.w, box.h, 10);
+  ctx.fill();
+  ctx.stroke();
+
+  // title above
+  ctx.fillStyle = "#1f2a37";
+  ctx.font = "600 14px system-ui";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+  ctx.fillText(title, box.x + box.w / 2, box.y - 8);
+
+  // count in corner
+  ctx.fillStyle = "#5d6b7a";
+  ctx.font = "600 13px system-ui";
+  ctx.textAlign = "right";
+  ctx.fillText(countText, box.x + box.w - 10, box.y + 18);
+}
+
+function drawDiagram(balking) {
+  ctx.clearRect(0, 0, W, H);
+
+  // --- Arrows (drawn first, behind boxes) ---
+  const arrivalColor = "#5d6b7a";
+  const goodColor    = "#2f7d39";
+  const defectColor  = "#cc4a3a";
+  const reworkColor  = "#cc4a3a";
+  const divertColor  = balking ? "#e89320" : "#bcc3cc";
+  const pullColor    = "#4a90e2";
+
+  // 1. Arrival (gray, → ): arrivalStart -> divertBranch
+  drawPolyArrow([layout.arrivalStart, layout.divertBranch], arrivalColor, 2.5);
+
+  // 2. Divert UP (orange when balking, light gray when idle): divertBranch -> backlog bottom (x=340)
+  drawPolyArrow([layout.divertBranch, layout.divertEnter], divertColor, balking ? 3 : 1.8);
+
+  // 3. Main flow continuation (gray, → ): divertBranch -> processIn (this is where ENTERING, PULL and REWORK all converge)
+  drawPolyArrow([layout.divertBranch, layout.processIn], "#8a8676", 2.5);
+
+  // 4. Pull DOWN (blue, ↓ ): backlog bottom -> joins main flow (x=430)
+  drawPolyArrow([layout.pullExit, layout.pullJoin], pullColor, 1.8);
+
+  // 5. Rework UP (red, ↑ ): defect queue top -> joins main flow at door (x=380)
+  drawPolyArrow([layout.defectExit, layout.door], reworkColor, 2);
+
+  // 6. Process -> shipped (green, → ↑ )
+  drawPolyArrow([layout.processOut, layout.shipTurn, layout.shipTop], goodColor, 2.5);
+
+  // 7. Process -> defect queue (red, → ↓ ← )
+  drawPolyArrow([layout.processOut, layout.defectTurn1, layout.defectTurn2, layout.defectBoxRight], defectColor, 2.5);
+
+  // --- Boxes ---
+  drawBox(layout.backlogBox, "Product Backlog",
+    `${state.backlog.length}`, "#f1f5fb", "#bcc8d6");
+  drawBox(layout.processBox, "Process (the team)",
+    `${state.inProcess.length} in / cap ${readParams().processRate}`, "#eaf7ef", "#9dd9b7");
+  drawBox(layout.defectBox, "Defect Queue",
+    `${state.defectQueue.length}`, "#fdecea", "#e89687");
+  drawBox(layout.shippedBox, "Shipped",
+    `${state.totalShipped}`, "#eaf7ef", "#9dd9b7");
+
+  // Door indicator (always a circle at the visual junction)
+  ctx.fillStyle = balking ? "#e89320" : "#4a90e2";
+  ctx.strokeStyle = "#fff";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(layout.door.x, layout.door.y, 9, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  // Branch-point indicator (where divert decision happens)
+  ctx.fillStyle = balking ? "#e89320" : "#bcc3cc";
+  ctx.beginPath();
+  ctx.arc(layout.divertBranch.x, layout.divertBranch.y, 5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Labels
+  ctx.fillStyle = "#5d6b7a";
+  ctx.font = "11px system-ui";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+  ctx.fillText("door", layout.door.x + 12, layout.door.y + 22);
+  ctx.fillText("(decision)", layout.door.x + 12, layout.door.y + 35);
+
+  // Track labels (small, next to each vertical arrow)
+  ctx.font = "10px system-ui";
+  ctx.fillStyle = balking ? "#a85f00" : "#7c8794";
+  ctx.textAlign = "right";
+  ctx.fillText("divert ↑", layout.divertEnter.x - 6, 290);
+  ctx.fillStyle = "#4a90e2";
+  ctx.textAlign = "left";
+  ctx.fillText("pull ↓", layout.pullExit.x + 6, 290);
+  ctx.fillStyle = "#cc4a3a";
+  ctx.fillText("rework ↑", layout.defectExit.x + 6, 410);
+
+  // Arrival label
+  ctx.fillStyle = "#5d6b7a";
+  ctx.font = "11px system-ui";
+  ctx.textAlign = "left";
+  const P = readParams();
+  ctx.fillText(`new work: ${P.arrivalRate.toFixed(1)}/day (${P.arrivalMode})`, 30, 365);
+}
+
+function drawItems(P) {
+  const now = performance.now();
+  const dayMs = P.dayMs;
+  const R = 10;  // dot radius (bigger so label is readable)
+  for (const item of state.items.values()) {
+    let x, y;
+    if (item.path) {
+      const dur = item.tweenDurationMs || dayMs;
+      const t = Math.max(0, Math.min(1, (now - item.phaseStartMs) / dur));
+      const p = pointAlongPolyline(item.path, t);
+      x = p.x + (item.xJitter || 0);
+      y = p.y + (item.yJitter || 0);
+    } else if (item.parkedPos) {
+      x = item.parkedPos.x; y = item.parkedPos.y;
+    } else {
+      continue;
+    }
+    // dot
+    ctx.fillStyle = item.color;
+    ctx.strokeStyle = "rgba(0,0,0,0.35)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(x, y, R, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    // rework ring (a ring around the outside, brighter than the inner dot color)
+    if (item.reworkCount > 0) {
+      ctx.strokeStyle = "rgba(255,255,255,0.85)";
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.arc(x, y, R + 2, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    // label
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "700 11px ui-monospace, SFMono-Regular, Consolas, monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(item.label, x, y + 0.5);
+  }
+}
+
+// ===================================================================
+// CHART
+// ===================================================================
+const chartCanvas = document.getElementById("chartCanvas");
+const cctx = chartCanvas.getContext("2d");
+
+function drawChart() {
+  const cw = chartCanvas.width, ch = chartCanvas.height;
+  cctx.clearRect(0, 0, cw, ch);
+  const days = state.history.day;
+  if (days.length < 2) return;
+  const padL = 40, padR = 10, padT = 12, padB = 22;
+  const plotW = cw - padL - padR, plotH = ch - padT - padB;
+
+  const shipped = state.history.shipped;
+  const ceiling = state.history.ceiling;
+  const defects = state.history.defects;
+  const maxY1 = Math.max(1, ceiling[ceiling.length - 1]);
+  const maxDef = Math.max(...defects, 1);
+
+  // Axis
+  cctx.strokeStyle = "#dde3eb";
+  cctx.lineWidth = 1;
+  cctx.beginPath();
+  cctx.moveTo(padL, padT);
+  cctx.lineTo(padL, padT + plotH);
+  cctx.lineTo(padL + plotW, padT + plotH);
+  cctx.stroke();
+  // y ticks
+  cctx.fillStyle = "#7c8794";
+  cctx.font = "10px system-ui";
+  cctx.textAlign = "right";
+  cctx.textBaseline = "middle";
+  for (let i = 0; i <= 4; i++) {
+    const y = padT + plotH - (i/4) * plotH;
+    const v = Math.round((i/4) * maxY1);
+    cctx.fillText(v, padL - 4, y);
+    cctx.strokeStyle = "#eef2f7";
+    cctx.beginPath();
+    cctx.moveTo(padL, y);
+    cctx.lineTo(padL + plotW, y);
+    cctx.stroke();
+  }
+  // x ticks
+  cctx.textAlign = "center";
+  cctx.textBaseline = "top";
+  for (let i = 0; i <= 4; i++) {
+    const x = padL + (i/4) * plotW;
+    const d = Math.round(days[0] + (i/4) * (days[days.length-1] - days[0]));
+    cctx.fillText(d, x, padT + plotH + 4);
+  }
+
+  // Plot lines
+  function plot(arr, color, max, width=2) {
+    cctx.strokeStyle = color;
+    cctx.lineWidth = width;
+    cctx.beginPath();
+    for (let i = 0; i < arr.length; i++) {
+      const x = padL + (i / (arr.length - 1)) * plotW;
+      const y = padT + plotH - (arr[i] / max) * plotH;
+      if (i === 0) cctx.moveTo(x, y);
+      else cctx.lineTo(x, y);
+    }
+    cctx.stroke();
+  }
+  plot(ceiling, "#aaaaaa", maxY1, 1.5);
+  plot(shipped, "#2f7d39", maxY1, 2);
+  // Defect queue on its own scale (right side, faded)
+  cctx.strokeStyle = "rgba(204, 74, 58, 0.55)";
+  cctx.lineWidth = 1.4;
+  cctx.beginPath();
+  for (let i = 0; i < defects.length; i++) {
+    const x = padL + (i / (defects.length - 1)) * plotW;
+    const y = padT + plotH - (defects[i] / maxDef) * plotH;
+    if (i === 0) cctx.moveTo(x, y);
+    else cctx.lineTo(x, y);
+  }
+  cctx.stroke();
+
+  // Right axis label for defects
+  cctx.fillStyle = "rgba(204, 74, 58, 0.9)";
+  cctx.font = "10px system-ui";
+  cctx.textAlign = "left";
+  cctx.fillText(`defect Q max ${maxDef}`, padL + plotW - 90, padT + 4);
+}
+
+// ===================================================================
+// METRICS PANEL
+// ===================================================================
+function updateMetrics(P, lastTick) {
+  document.getElementById("dayPill").textContent = state.day;
+  document.getElementById("mDay").textContent = state.day;
+
+  // Find day of first ship by walking forward through dailyShipped
+  let firstShipIdx = -1;
+  for (let i = 0; i < state.dailyShipped.length; i++) {
+    if (state.dailyShipped[i] > 0) { firstShipIdx = i; break; }
+  }
+  // Rolling avg: last 10 days, but only of days AFTER first ship (skip warmup zeros)
+  let tputDisplay = "—";
+  let dragDisplay = "—";
+  if (firstShipIdx >= 0 && state.dailyShipped.length - firstShipIdx >= 1) {
+    const eligible = state.dailyShipped.slice(firstShipIdx);
+    const win = eligible.slice(-10);
+    const tput = win.reduce((a,b)=>a+b,0) / win.length;
+    tputDisplay = tput.toFixed(2);
+    const sustainable = Math.min(P.arrivalRate, P.processRate * (1 - P.defectRate));
+    const drag = Math.max(0, sustainable - tput);
+    dragDisplay = drag.toFixed(2) + " / day";
+  }
+  // Sustainable rate: λ if arrival is the bottleneck, else μ*(1-d) accounting for rework
+  const sustainable = Math.min(P.arrivalRate, P.processRate * (1 - P.defectRate));
+  document.getElementById("mShipped").textContent = state.totalShipped;
+  document.getElementById("mTput").textContent = tputDisplay;
+  document.getElementById("mCeiling").textContent = sustainable.toFixed(2) + " / day";
+  document.getElementById("mLost").textContent = dragDisplay;
+
+  if (state.leadTimes.length) {
+    const recent = state.leadTimes.slice(-100);
+    const avg = recent.reduce((a,b)=>a+b,0) / recent.length;
+    document.getElementById("mLead").textContent = avg.toFixed(1);
+    document.getElementById("mLeadP85").textContent = percentile(recent, 0.85);
+    document.getElementById("mLeadMax").textContent = Math.max(...recent);
+  }
+
+  document.getElementById("mBacklog").textContent = state.backlog.length;
+  document.getElementById("mDefects").textContent = state.defectQueue.length;
+  document.getElementById("mInProc").textContent = state.inProcess.length;
+  const wip = state.backlog.length + state.defectQueue.length + state.inProcess.length;
+  document.getElementById("mWip").textContent = wip;
+
+  document.getElementById("mDefCreated").textContent = state.totalDefectsCreated;
+  document.getElementById("mReworkDone").textContent = state.totalDefectsCreated; // each defect = 1 rework cycle
+  const reworkPer = state.totalShipped === 0 ? 0 : state.totalDefectsCreated / state.totalShipped;
+  document.getElementById("mReworkPer").textContent = reworkPer.toFixed(2);
+
+  // Status bar
+  const cap = P.processRate;
+  const used = (lastTick ? lastTick.capacity - 0 : cap); // approximate
+  const util = cap === 0 ? 0 : Math.min(1, (state.inProcess.length) / cap);
+  document.getElementById("utilPill").textContent = Math.round(util * 100) + "%";
+  const reworkLoad = cap === 0 ? 0 : (lastTick ? lastTick.reworkSlots / cap : 0);
+  document.getElementById("reworkPill").textContent = Math.round(reworkLoad * 100) + "%";
+
+  // theoretical utilization for status decision
+  const lambdaEff = P.arrivalRate / Math.max(0.0001, 1 - P.defectRate);
+  const rho = lambdaEff / P.processRate;
+  const sb = document.getElementById("statusBar");
+  const st = document.getElementById("statusText");
+  sb.className = "";
+  if (rho > 1.02) {
+    sb.classList.add("status-collapse");
+    st.textContent = `COLLAPSE: effective arrival ${lambdaEff.toFixed(2)}/day > capacity ${P.processRate} (ρ=${rho.toFixed(2)}) — queues grow without bound`;
+  } else if (rho >= 0.95) {
+    sb.classList.add("status-balking");
+    st.textContent = `At the edge: effective arrival ${lambdaEff.toFixed(2)}/day vs capacity ${P.processRate} (ρ=${rho.toFixed(2)})`;
+  } else if (lastTick && lastTick.balking) {
+    sb.classList.add("status-balking");
+    st.textContent = `Balking: arrivals diverted to backlog this tick (ρ=${rho.toFixed(2)})`;
+  } else {
+    sb.classList.add("status-normal");
+    st.textContent = `Stable flow (ρ=${rho.toFixed(2)})`;
+  }
+}
+
+// ===================================================================
+// MAIN LOOP
+// ===================================================================
+let lastTickInfo = null;
+
+function loop(now) {
+  const P = readParams();
+  if (state.running && now - state.lastTickMs >= P.dayMs) {
+    state.lastTickMs = now;
+    lastTickInfo = simTick(P);
+    updateMetrics(P, lastTickInfo);
+    drawChart();
+  }
+  if (state.running) {
+    // Event-driven transitions every frame (admission, parking, etc.)
+    checkItemTransitions(now, P);
+  }
+  drawDiagram(lastTickInfo ? lastTickInfo.balking : false);
+  drawItems(P);
+  requestAnimationFrame(loop);
+}
+
+function reset() {
+  state = freshState();
+  lastTickInfo = null;
+  drawDiagram(false);
+  drawChart();
+  updateMetrics(readParams(), null);
+}
+
+// Init
+fitCanvas();
+state = freshState();
+drawDiagram(false);
+updateMetrics(readParams(), null);
+requestAnimationFrame(loop);
+
+document.getElementById("startBtn").addEventListener("click", () => {
+  if (!state.running) {
+    state.running = true;
+    state.lastTickMs = performance.now() - readParams().dayMs; // fire immediately
+  }
+});
+document.getElementById("pauseBtn").addEventListener("click", () => {
+  state.running = false;
+});
+document.getElementById("resetBtn").addEventListener("click", reset);
+
+</script>
+</body>
+</html>
