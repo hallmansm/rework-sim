@@ -162,7 +162,7 @@
       <div class="legend">
         <span><span class="swatch" style="background:#2f7d39"></span>Cumulative shipped</span>
         <span><span class="swatch" style="background:#aaa"></span>Counterfactual ceiling</span>
-        <span><span class="swatch" style="background:#cc4a3a"></span>Defect queue depth</span>
+        <span><span class="swatch" style="background:#e89320"></span>Product Backlog depth</span>
       </div>
     </div>
   </div>
@@ -307,7 +307,7 @@ function freshState() {
     leadTimes: [],
     dailyShipped: [],     // shipped count per day
     history: {            // for chart
-      day: [], shipped: [], defects: [], ceiling: [],
+      day: [], shipped: [], defects: [], ceiling: [], backlog: [],
     },
 
     // For "items arriving at door this tick", we track items in ARRIVING transit
@@ -603,6 +603,7 @@ function simTick(P) {
   state.history.day.push(state.day);
   state.history.shipped.push(state.totalShipped);
   state.history.defects.push(defectsWaitingAtDawn);
+  state.history.backlog.push(state.backlog.length);
   const ceilingPerDay = Math.min(P.arrivalRate, P.processRate);
   const prevCeiling = state.history.ceiling.length === 0 ? 0 : state.history.ceiling[state.history.ceiling.length - 1];
   state.history.ceiling.push(prevCeiling + ceilingPerDay);
@@ -611,6 +612,7 @@ function simTick(P) {
     state.history.shipped.shift();
     state.history.defects.shift();
     state.history.ceiling.shift();
+    state.history.backlog.shift();
   }
 
   state.day++;
@@ -1010,23 +1012,9 @@ function drawChart() {
   }
   plot(ceiling, "#aaaaaa", maxY1, 1.5);
   plot(shipped, "#2f7d39", maxY1, 2);
-  // Defect queue on its own scale (right side, faded)
-  cctx.strokeStyle = "rgba(204, 74, 58, 0.55)";
-  cctx.lineWidth = 1.4;
-  cctx.beginPath();
-  for (let i = 0; i < defects.length; i++) {
-    const x = padL + (i / (defects.length - 1)) * plotW;
-    const y = padT + plotH - (defects[i] / maxDef) * plotH;
-    if (i === 0) cctx.moveTo(x, y);
-    else cctx.lineTo(x, y);
-  }
-  cctx.stroke();
-
-  // Right axis label for defects
-  cctx.fillStyle = "rgba(204, 74, 58, 0.9)";
-  cctx.font = "10px system-ui";
-  cctx.textAlign = "left";
-  cctx.fillText(`defect Q max ${maxDef}`, padL + plotW - 90, padT + 4);
+  // Product Backlog depth on the SAME items scale — flat on the floor when
+  // healthy, climbing steadily in collapse. One scale, no hidden axes.
+  plot(state.history.backlog, "#e89320", maxY1, 2);
 }
 
 // ===================================================================
