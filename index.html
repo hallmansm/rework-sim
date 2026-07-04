@@ -81,8 +81,8 @@
 <div id="panel">
   <label>Arrival mode
     <select id="arrivalMode">
-      <option value="poisson" selected>Poisson</option>
-      <option value="deterministic">Deterministic</option>
+      <option value="deterministic" selected>Deterministic</option>
+      <option value="poisson">Poisson</option>
     </select>
   </label>
   <label>Arrival rate (/day)
@@ -174,6 +174,7 @@
     <li>&lambda;=9, &mu;=10, d=0.10 &rarr; &rho; = 1.00 (on the edge)</li>
     <li>&lambda;=9, &mu;=10, d=0.33 &rarr; &rho; = 1.34 (system can't keep up &mdash; queues grow forever)</li>
   </ul>
+  <p><b>Arrival mode:</b> deterministic (the default) delivers exactly &lambda; items every day &mdash; the cleanest way to see what rework alone does. Poisson makes the daily count random with mean &lambda;: some days 6, some days 13. At high utilization those bursts queue up even with zero defects &mdash; a true and separate lesson (variance &times; utilization = queues), but it muddies the rework story, so it's opt-in.</p>
   <p>&dagger; <b>Sustainable rate</b> = <code>min(&lambda;, &mu;&middot;(1&minus;d))</code> &mdash; the most the team can ship per day in steady state. If &lambda; is low enough that arrivals are the bottleneck, this equals &lambda;. If rework is eating capacity, it's lower. The <b>drag</b> stat compares actual rolling throughput to this number.</p>
   <p><b>Symbols inside the dots</b> (1&hellip;9, 0, A&hellip;Z, a&hellip;z) are item IDs &mdash; lets you track an individual unit of work through the system. A white ring around a dot means it has been reworked at least once.</p>
 </details>
@@ -493,9 +494,9 @@ function simTick(P) {
     if (dIdx >= 0) state.defectQueue.splice(dIdx, 1);
     const it = state.items.get(id);
     setTransit(it, "REWORKING");
-    // Fast animation: pulled items clear their queue box quickly so the
-    // re-park grid doesn't shuffle around them mid-flight.
-    it.tweenDurationMs = 0.05 * P.dayMs;
+    // Staggered, visible flight: the red train climbs from the defect queue
+    // through the switch. All aboard well before the next tick.
+    it.tweenDurationMs = Math.min(0.35, 0.12 + 0.04 * i) * P.dayMs;
     state.inProcess.push(id);
   }
   slotsAvailable -= reworkSlots;
@@ -509,7 +510,10 @@ function simTick(P) {
     if (bIdx >= 0) state.backlog.splice(bIdx, 1);
     const it = state.items.get(id);
     setTransit(it, "PULLING");
-    it.tweenDurationMs = 0.05 * P.dayMs;
+    // Staggered, visible flight: the gray train rides down from the backlog
+    // through the switch — no more instant same-slot refill that read as
+    // "ghost dots" left behind by the shipping greens.
+    it.tweenDurationMs = Math.min(0.4, 0.15 + 0.03 * i) * P.dayMs;
     state.inProcess.push(id);
   }
 
