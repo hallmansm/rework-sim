@@ -874,6 +874,12 @@ function drawItems(P) {
   const now = performance.now();
   const dayMs = P.dayMs;
   const R = 10;  // dot radius (bigger so label is readable)
+  // Overflow dots that marched off the left edge get absorbed into one black
+  // edge chip per queue ("+N"), instead of being drawn invisibly. Cash-out is
+  // automatic: parking is index-based, so as the queue drains, dots shift
+  // toward the head and walk back onto the canvas by themselves.
+  const EDGE = 34;
+  let offBacklog = 0, offDefect = 0;
   for (const item of state.items.values()) {
     let x, y;
     if (item.path) {
@@ -884,6 +890,10 @@ function drawItems(P) {
       y = p.y + (item.yJitter || 0);
     } else if (item.parkedPos) {
       x = item.parkedPos.x; y = item.parkedPos.y;
+      if (x < EDGE) {
+        if (item.phase === "IN_BACKLOG") { offBacklog++; continue; }
+        if (item.phase === "IN_DEFECT_QUEUE") { offDefect++; continue; }
+      }
     } else {
       continue;
     }
@@ -910,6 +920,27 @@ function drawItems(P) {
     ctx.textBaseline = "middle";
     ctx.fillText(item.label, x, y + 0.5);
   }
+  // The edge chips: one black dot with a white count = everything off-screen.
+  const chip = (count, cy) => {
+    if (count <= 0) return;
+    ctx.fillStyle = "#111111";
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(18, cy, 14, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "700 10px ui-monospace, SFMono-Regular, Consolas, monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("+" + count, 18, cy + 0.5);
+    ctx.fillStyle = "#5d6b7a";
+    ctx.font = "9px system-ui";
+    ctx.fillText("off-screen", 22, cy + 26);
+  };
+  chip(offBacklog, layout.backlogBox.y + Math.floor(layout.backlogBox.h / 2));
+  chip(offDefect, layout.defectBox.y + Math.floor(layout.defectBox.h / 2));
 }
 
 // ===================================================================
