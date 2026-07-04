@@ -44,8 +44,15 @@
      and the whole page below it wiggles. (Thanks Tim.) The text row always
      reserves exactly two lines and can never grow past two; the pills always
      sit on their own row. Constant height at any width. */
+  #statusTop { flex: 1 1 100%; display: flex; gap: 10px; align-items: flex-start; }
+  #statePill {
+    flex: 0 0 auto; margin-top: 1px;
+    padding: 2px 10px; border-radius: 10px;
+    font-weight: 700; font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase;
+    color: #fff; background: #6b7683;
+  }
   #statusText {
-    flex: 1 1 100%;
+    flex: 1 1 auto;
     min-height: 2.9em;
     display: -webkit-box;
     -webkit-line-clamp: 2;
@@ -131,7 +138,10 @@
 </div>
 
 <div id="statusBar" class="status-normal">
-  <span id="statusText">Idle &mdash; press Start</span>
+  <div id="statusTop">
+    <span id="statePill">Idle</span>
+    <span id="statusText">Idle &mdash; press Start</span>
+  </div>
   <span class="pill">Day <span id="dayPill">0</span></span>
   <span class="pill">Effective arrival <span id="arrPill">&mdash;</span></span>
   <span class="pill">Effective intake <span id="intakePill">&mdash;</span></span>
@@ -214,9 +224,10 @@ const layout = {
   switchNode:   { x: 430, y: 380 },  // THE SWITCH: PBL pull (from above) + rework (from below) merge here
   processIn:    { x: 600, y: 380 },
   processOut:   { x: 960, y: 380 },
+  defectOut:    { x: 960, y: 430 },  // defects leave Production by their OWN lower door — no shared outlet with the ship track
   shipTurn:     { x:1180, y: 380 },
   shipTop:      { x:1180, y: 130 },
-  defectTurn1:  { x:1080, y: 380 },
+  defectTurn1:  { x:1080, y: 430 },
   defectTurn2:  { x:1080, y: 520 },
   defectBoxRight:{x: 450, y: 520 },
 
@@ -241,7 +252,7 @@ const paths = {
   DIVERTING:   [layout.pblTurn, layout.pblEnter],
   PULLING:     [layout.pullExit, layout.switchNode, layout.processIn],
   SHIPPING:    [layout.processOut, layout.shipTurn, layout.shipTop],
-  DEFECTING:   [layout.processOut, layout.defectTurn1, layout.defectTurn2, layout.defectBoxRight],
+  DEFECTING:   [layout.defectOut, layout.defectTurn1, layout.defectTurn2, layout.defectBoxRight],
   REWORKING:   [layout.defectExit, layout.switchNode, layout.processIn],
 };
 
@@ -825,8 +836,9 @@ function drawDiagram(queuePressure) {
   // 5. Process -> shipped (green, → ↑ )
   drawPolyArrow([layout.processOut, layout.shipTurn, layout.shipTop], goodColor, 2.5);
 
-  // 6. Process -> defect queue (red, → ↓ ← )
-  drawPolyArrow([layout.processOut, layout.defectTurn1, layout.defectTurn2, layout.defectBoxRight], defectColor, 2.5);
+  // 6. Process -> defect queue (red, → ↓ ← ) — leaves by its own lower door,
+  //    visually distinct from the green ship track above it.
+  drawPolyArrow([layout.defectOut, layout.defectTurn1, layout.defectTurn2, layout.defectBoxRight], defectColor, 2.5);
 
   // --- Boxes ---
   drawBox(layout.backlogBox, "Product Backlog",
@@ -1096,6 +1108,8 @@ function updateMetrics(P, lastTick) {
   const rho = lambdaEff / P.processRate;
   const sb = document.getElementById("statusBar");
   const st = document.getElementById("statusText");
+  const statePill = document.getElementById("statePill");
+  const setState = (label, bg) => { statePill.textContent = label; statePill.style.background = bg; };
   sb.className = "";
   // The pair that tells the rework story at a glance: what the world sends
   // vs what the team must actually swallow. Both MEASURED (rolling 10-day
@@ -1117,15 +1131,19 @@ function updateMetrics(P, lastTick) {
   const growth = backlogNow - weekAgo;
   if (state.day === 0) {
     sb.classList.add("status-normal");
+    setState("Idle", "#6b7683");
     st.textContent = "Idle — press Start";
   } else if (bh.length >= 8 && growth >= 5 && backlogNow >= 8) {
     sb.classList.add("status-collapse");
+    setState("Supercritical", "#7a1c10");
     st.textContent = `COLLAPSE: backlog up ${growth} in the last 7 days and climbing — the team must serve ${lambdaEff.toFixed(2)} passes/day (${P.arrivalRate} new + ${(lambdaEff - P.arrivalRate).toFixed(2)} rework) against capacity ${P.processRate} (ρ=${rho.toFixed(2)})`;
   } else if (lastTick && lastTick.queuePressure) {
     sb.classList.add("status-balking");
+    setState("Critical", "#8a6a00");
     st.textContent = `Balking: Production full — arrivals diverted to the Product Backlog (ρ=${rho.toFixed(2)})`;
   } else {
     sb.classList.add("status-normal");
+    setState("Stable", "#1c5b34");
     st.textContent = `Stable flow (ρ=${rho.toFixed(2)})`;
   }
   st.title = st.textContent;  // full text on hover if the 2-line clamp cuts it
