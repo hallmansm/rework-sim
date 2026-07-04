@@ -778,8 +778,18 @@ function drawDiagram(queuePressure) {
   // --- Boxes ---
   drawBox(layout.backlogBox, "Product Backlog",
     `${state.backlog.length}`, "#f1f5fb", "#bcc8d6");
+  // "In the system" = committed past the balk turnout, not yet done — some
+  // of those dots are still riding the track toward the box. Show both so
+  // the count reconciles with the eye.
+  let inbound = 0;
+  for (const id of state.inProcess) {
+    const it = state.items.get(id);
+    if (it && it.phase !== "IN_PROCESS") inbound++;
+  }
+  const parked = state.inProcess.length - inbound;
   drawBox(layout.processBox, "Process (the team)",
-    `${state.inProcess.length} in / cap ${readParams().processRate}`, "#eaf7ef", "#9dd9b7");
+    inbound > 0 ? `${parked} in + ${inbound} inbound / cap ${readParams().processRate}`
+                : `${parked} in / cap ${readParams().processRate}`, "#eaf7ef", "#9dd9b7");
   drawBox(layout.defectBox, "Defect Queue",
     `${state.defectQueue.length}`, "#fdecea", "#e89687");
   drawBox(layout.shippedBox, "Shipped",
@@ -804,7 +814,7 @@ function drawDiagram(queuePressure) {
   ctx.fillText("(rework policy)", layout.switchNode.x + 14, layout.switchNode.y + 35);
 
   // Track labels (small, next to each vertical arrow)
-  ctx.font = "10px system-ui";
+  ctx.font = "11px system-ui";
   ctx.fillStyle = queuePressure ? "#a85f00" : "#7c8794";
   ctx.textAlign = "right";
   ctx.fillText("balk ↑", layout.pblEnter.x - 6, 290);
