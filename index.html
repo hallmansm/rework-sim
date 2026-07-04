@@ -25,6 +25,7 @@
     background: #fff; font-size: 13px; min-width: 110px;
   }
   #panel input:focus, #panel select:focus { outline: 2px solid #6aa3f0; outline-offset: -1px; border-color: #6aa3f0; }
+  #panel input:disabled { background: #eef1f4; color: #9aa4af; border-color: #dde3ea; }
   #panel .spacer { flex: 1; }
   #panel .buttons { display: flex; gap: 6px; }
   #panel button {
@@ -1114,6 +1115,14 @@ state = freshState();
 drawDiagram(false);
 updateMetrics(readParams(), null);
 requestAnimationFrame(loop);
+
+// Mix / N only feeds the proportional and 1-per-N policies; under
+// defect-first it does nothing, so it grays out rather than lying.
+const policySel = document.getElementById("reworkPolicy");
+const mixInput = document.getElementById("mixParam");
+function syncMixEnabled() { mixInput.disabled = (policySel.value === "priority"); }
+policySel.addEventListener("change", syncMixEnabled);
+syncMixEnabled();
 
 document.getElementById("startBtn").addEventListener("click", () => {
   if (!state.running) {
