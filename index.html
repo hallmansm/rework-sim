@@ -75,7 +75,7 @@
 
 <header>
   <h1>Flow Simulation &mdash; the rework backwash effect</h1>
-  <div class="sub">One process box. Every arrival enters the Product Backlog; the team pulls from it, and defects loop back to the same switch. Watch what 33% rework does to throughput &mdash; not 33% slower, but a cliff.</div>
+  <div class="sub">One process box. Arrivals head straight for Production; they only divert to the Product Backlog when Production balks at capacity &mdash; and defects loop back to the pull switch. Watch what 33% rework does to throughput &mdash; not 33% slower, but a cliff.</div>
 </header>
 
 <div id="panel">
@@ -168,7 +168,7 @@
 <details open>
   <summary>What this is showing &mdash; and why "33% rework" doesn't mean "33% slower"</summary>
   <p>This is a single-station queueing model with feedback. Items arrive at rate <b>&lambda;</b>, the team works at rate <b>&mu;</b>, and a fraction <b>d</b> of completed items come back to be reworked.</p>
-  <p>Every arrival enters the Product Backlog &mdash; nothing bypasses it. The team pulls work into Process at the <b>switch</b>, where two lines merge: new items pulled down from the backlog, and defects climbing back up from the Defect Queue for another full pass. The rework policy sets the switch. Because every defect must be served again, the effective arrival rate the team must serve is <b>&lambda;<sub>eff</sub> = &lambda; / (1 &minus; d)</b>. The team's utilization is <b>&rho; = &lambda;<sub>eff</sub> / &mu;</b>. As &rho; approaches 1, queues grow without bound &mdash; the bottleneck collapses.</p>
+  <p>Arrivals head straight for Production. The balk turnout only sends an item up to the Product Backlog when Production is at capacity &mdash; or when the backlog already holds someone (strict FIFO, no line-jumping). The team pulls waiting work into Process at the <b>switch</b>, where two lines merge: items pulled down from the backlog, and defects climbing back up from the Defect Queue for another full pass. The rework policy sets the switch. Because every defect must be served again, the effective arrival rate the team must serve is <b>&lambda;<sub>eff</sub> = &lambda; / (1 &minus; d)</b>. The team's utilization is <b>&rho; = &lambda;<sub>eff</sub> / &mu;</b>. As &rho; approaches 1, queues grow without bound &mdash; the bottleneck collapses.</p>
   <ul>
     <li>&lambda;=9, &mu;=10, d=0 &rarr; &rho; = 0.90 (comfortable)</li>
     <li>&lambda;=9, &mu;=10, d=0.10 &rarr; &rho; = 1.00 (on the edge)</li>
@@ -186,13 +186,14 @@
 // LAYOUT
 // ===================================================================
 const W = 1280, H = 640;
-// All horizontal flow is on y=380. Every arrival enters the Product Backlog
-// (nothing bypasses it). The team pulls from the PBL down to the SWITCH at
-// x=430; defect rework climbs from the defect queue to the SAME switch. One
-// node feeds Process; the rework policy decides which line the switch reads.
+// All horizontal flow is on y=380. Arrivals ride the mainline straight at
+// Production. The turnout up to the Product Backlog (x=340) only throws when
+// Production balks at capacity (or someone is already waiting — no
+// line-jumping). The PBL pull comes down at x=430 and defect rework climbs
+// up at x=430, merging at the SWITCH that feeds Process.
 const layout = {
   arrivalStart: { x:  30, y: 380 },
-  pblTurn:      { x: 340, y: 380 },  // arrivals turn up into the Product Backlog here
+  pblTurn:      { x: 340, y: 380 },  // the balk turnout: arrivals divert up to the PBL here ONLY when Production is full
   switchNode:   { x: 430, y: 380 },  // THE SWITCH: PBL pull (from above) + rework (from below) merge here
   processIn:    { x: 600, y: 380 },
   processOut:   { x: 960, y: 380 },
@@ -213,11 +214,14 @@ const layout = {
   shippedBox:  { x: 1080, y: 60, w: 200, h: 140 },
 };
 
-// Polylines for each transit phase (start -> end). Arrivals go up at x=340;
-// pull comes down and rework comes up on the shared x=430 column, meeting the
-// mainline at the switch.
+// Polylines for each transit phase (start -> end). ARRIVING ends at the balk
+// turnout, where the admission decision fires: continue on the mainline into
+// Process (ENTERING) or divert up to the backlog (DIVERTING). Pull comes down
+// and rework comes up on the shared x=430 column, merging at the switch.
 const paths = {
-  ARRIVING:    [layout.arrivalStart, layout.pblTurn, layout.pblEnter],
+  ARRIVING:    [layout.arrivalStart, layout.pblTurn],
+  ENTERING:    [layout.pblTurn, layout.switchNode, layout.processIn],
+  DIVERTING:   [layout.pblTurn, layout.pblEnter],
   PULLING:     [layout.pullExit, layout.switchNode, layout.processIn],
   SHIPPING:    [layout.processOut, layout.shipTurn, layout.shipTop],
   DEFECTING:   [layout.processOut, layout.defectTurn1, layout.defectTurn2, layout.defectBoxRight],
@@ -289,6 +293,7 @@ function freshState() {
     shipped: [],
 
     // Stats
+    balksSinceTick: 0,
     totalShipped: 0,
     totalDefectsCreated: 0,
     totalReworkCycles: 0,
@@ -315,7 +320,7 @@ function makeItem() {
     phase: "ARRIVING",
     phaseStartMs: performance.now(),
     fromPos: { ...layout.arrivalStart },
-    toPos:   { ...layout.pblEnter },
+    toPos:   { ...layout.pblTurn },
     path: paths.ARRIVING,
     parkedPos: null,
     createdDay: state.day,
@@ -421,12 +426,14 @@ function readParams() {
 //   - simTick fires once per "day" (every dayMs ms). It handles end-of-day
 //     events (items in Process ship), start-of-day events (pull from PBL /
 //     defect queue at the switch), and spawns the day's arrivals with
-//     staggered times across the day. EVERY arrival enters the Product
-//     Backlog — nothing bypasses it into Process.
+//     staggered times across the day. Arrivals head straight for Production;
+//     the balk turnout only sends them to the PBL when Production is full
+//     (or the queue is non-empty — strict FIFO, no line-jumping).
 //   - checkItemTransitions runs every frame. When an item's tween reaches
-//     t=1, its phase transition fires — park-into-backlog (ARRIVING done),
-//     park-into-process (PULLING/REWORKING done), park-into-defect-queue
-//     (DEFECTING done), or park-into-shipped (SHIPPING done).
+//     t=1, its phase transition fires — the admission decision (ARRIVING
+//     done), park-into-process (ENTERING/PULLING/REWORKING done),
+//     park-into-backlog (DIVERTING done), park-into-defect-queue (DEFECTING
+//     done), or park-into-shipped (SHIPPING done).
 //   - state.inProcess always holds every item logically occupying a Process
 //     slot, even while it's still tweening in.
 //   - state.backlog holds items actually parked in the backlog box; arrivals
@@ -574,8 +581,10 @@ function simTick(P) {
 
   state.day++;
 
-  // Queue pressure = the backlog still holds work this tick's pull couldn't take.
-  const queuePressure = (eligibleBacklog.length - pullCount) > 0;
+  // Queue pressure = arrivals balked to the PBL since last tick, or the
+  // backlog still holds work this tick's pull couldn't take.
+  const queuePressure = state.balksSinceTick > 0 || (eligibleBacklog.length - pullCount) > 0;
+  state.balksSinceTick = 0;
   return { queuePressure, capacity, reworkSlots, pulledFromBacklog: pullCount };
 }
 
@@ -596,13 +605,31 @@ function checkItemTransitions(now, P) {
 function handleTransitComplete(item, P) {
   switch (item.phase) {
     case "ARRIVING": {
-      // Reached the Product Backlog. EVERY arrival lands here — nothing
-      // bypasses the backlog into Process. It becomes pullable at the next
-      // start-of-day, when the switch feeds Process from PBL + defect queue.
+      // Reached the balk turnout. The track only switches to the Product
+      // Backlog when Production balks at capacity — or when someone is
+      // already waiting there (strict FIFO, no line-jumping past the queue).
+      const slotsUsed = state.inProcess.length;
+      const backlogEmpty = state.backlog.length === 0;
+      if (slotsUsed < P.processRate && backlogEmpty) {
+        setTransit(item, "ENTERING");
+        item.tweenDurationMs = 0.18 * P.dayMs;
+        state.inProcess.push(item.id);
+      } else {
+        state.balksSinceTick++;
+        setTransit(item, "DIVERTING");
+        item.tweenDurationMs = 0.2 * P.dayMs;
+        // Joins state.backlog when the DIVERTING tween completes — the box
+        // list stays the single source of truth for "actually in the queue."
+      }
+      break;
+    }
+    case "DIVERTING": {
+      // Reached the backlog box. NOW it counts as IN_BACKLOG.
       state.backlog.push(item.id);
       parkInBox(item, "IN_BACKLOG", layout.backlogBox, state.backlog.length - 1);
       break;
     }
+    case "ENTERING":
     case "PULLING":
     case "REWORKING": {
       // Reached Process slot. Park in grid.
@@ -729,9 +756,9 @@ function drawDiagram(queuePressure) {
   ctx.lineTo(layout.processIn.x, layout.processIn.y);
   ctx.stroke();
 
-  // 1. Arrivals (gray; orange when the backlog is holding work the team
-  //    couldn't pull): in from the left, up into the Product Backlog.
-  drawPolyArrow([layout.arrivalStart, layout.pblTurn, layout.pblEnter], pblColor, queuePressure ? 3 : 2.5);
+  // 1. The balk turnout (light gray when idle; orange when arrivals are
+  //    being diverted): only throws when Production balks at capacity.
+  drawPolyArrow([layout.pblTurn, layout.pblEnter], queuePressure ? "#e89320" : "#bcc3cc", queuePressure ? 3 : 1.8);
 
   // 2. Pull DOWN (blue, ↓ ): backlog bottom -> the switch
   drawPolyArrow([layout.pullExit, layout.switchNode], pullColor, 2);
@@ -780,7 +807,7 @@ function drawDiagram(queuePressure) {
   ctx.font = "10px system-ui";
   ctx.fillStyle = queuePressure ? "#a85f00" : "#7c8794";
   ctx.textAlign = "right";
-  ctx.fillText("arrivals ↑", layout.pblEnter.x - 6, 290);
+  ctx.fillText("balk ↑", layout.pblEnter.x - 6, 290);
   ctx.fillStyle = "#4a90e2";
   ctx.textAlign = "left";
   ctx.fillText("pull ↓", layout.pullExit.x + 6, 290);

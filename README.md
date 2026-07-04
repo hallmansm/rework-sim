@@ -8,9 +8,10 @@ or just download `index.html` and double-click it. No install, no build, no depe
 
 ## The model
 
-- Work arrives at rate **λ** per day; every arrival enters the Product
-  Backlog — nothing bypasses it. The team pulls into Process at a switch and
-  works at **μ** items per day.
+- Work arrives at rate **λ** per day and heads straight for Production; an
+  item diverts to the Product Backlog only when Production balks at capacity
+  (or the queue is non-empty — strict FIFO, no line-jumping). The team works
+  at **μ** items per day and pulls waiting work back in at a switch.
 - A fraction **d** of completed items come back as defects. The defect queue's
   return line merges at the same switch as the backlog pull — each open slot
   is fed from one line or the other, and the rework policy sets the switch.
