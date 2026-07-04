@@ -60,6 +60,11 @@
     overflow: hidden;
   }
   #statusBar .pill { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  /* The full-width state timeline: one colored tick per day, under the banner. */
+  #stateStrip {
+    display: block; width: calc(100% - 32px); height: 14px;
+    margin: 0 16px 10px; border-radius: 3px; background: #e7ebef;
+  }
   .status-normal { background: #e3f7ec; border: 1px solid #9dd9b7; color: #1c5b34; }
   .status-balking { background: #fff3d9; border: 1px solid #e8c275; color: #7a5a14; }
   .status-collapse { background: #fbe1dd; border: 1px solid #e89687; color: #7a2c1b; }
@@ -148,6 +153,8 @@
   <span class="pill">Utilization <span id="utilPill">0%</span></span>
   <span class="pill">Rework load <span id="reworkPill">0%</span></span>
 </div>
+
+<canvas id="stateStrip" width="1280" height="14" title="One tick per day: green stable, amber critical, red supercritical — watch the flicker frequency"></canvas>
 
 <div id="main">
   <div class="card" id="canvasWrap">
@@ -1082,6 +1089,26 @@ function drawChart() {
 }
 
 // ===================================================================
+// FULL-WIDTH STATE STRIP (under the banner)
+// ===================================================================
+const stripCanvas = document.getElementById("stateStrip");
+const sctx = stripCanvas.getContext("2d");
+
+function drawStateStrip() {
+  const w = stripCanvas.width, h = stripCanvas.height;
+  sctx.clearRect(0, 0, w, h);
+  const levels = state.history.level;
+  if (!levels || levels.length === 0) return;  // CSS background shows through as "no data yet"
+  const stripColors = ["#2f7d39", "#d19a13", "#c0392b"];
+  const n = levels.length;
+  const tick = w / n;
+  for (let i = 0; i < n; i++) {
+    sctx.fillStyle = stripColors[levels[i]] || "#999";
+    sctx.fillRect(i * tick, 0, tick + 0.5, h);
+  }
+}
+
+// ===================================================================
 // METRICS PANEL
 // ===================================================================
 function updateMetrics(P, lastTick) {
@@ -1191,6 +1218,7 @@ function updateMetrics(P, lastTick) {
     st.textContent = `Stable flow (ρ=${rho.toFixed(2)})`;
   }
   st.title = st.textContent;  // full text on hover if the 2-line clamp cuts it
+  drawStateStrip();
 }
 
 // ===================================================================
