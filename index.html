@@ -211,7 +211,7 @@ const layout = {
   pullExit:     { x: 430, y: 200 },  // bottom of backlog, right side (pulls out, straight down to the switch)
   defectExit:   { x: 430, y: 440 },  // top of defect queue (straight up to the switch)
 
-  backlogBox:  { x: 250, y:  60, w: 200, h: 140 },
+  backlogBox:  { x: 130, y:  21, w: 320, h: 179 },  // bottom edge stays at y=200 where both tracks connect
   processBox:  { x: 560, y: 280, w: 400, h: 200 },
   defectBox:   { x: 250, y: 440, w: 200, h: 140 },
   shippedBox:  { x: 1080, y: 60, w: 200, h: 140 },
@@ -364,17 +364,30 @@ function setTransit(item, phaseName) {
   item.tweenDurationMs = null;  // caller may override
 }
 
-// Park item in a queue slot. Stack within the box.
+// Park item in a queue slot. Fill the box in a grid sized from the box
+// itself; once the box is full, overflow marches LEFT out of the box (and
+// off the canvas — an unbounded queue should look unbounded), never down
+// across the tracks.
 function parkInBox(item, phaseName, box, indexInQueue) {
   item.phase = phaseName;
   item.path = null;
-  // Stack: grid 6 across, rows of ~20px
-  const cols = 6;
-  const cellW = 28, cellH = 22;
-  const col = indexInQueue % cols;
-  const row = Math.floor(indexInQueue / cols);
-  const x = box.x + 18 + col * cellW;
-  const y = box.y + 30 + row * cellH;
+  const cellW = 28, cellH = 21;
+  const cols = Math.max(1, Math.floor((box.w - 24) / cellW));
+  const maxRows = Math.max(1, Math.floor((box.h - 32) / cellH));
+  const capacity = cols * maxRows;
+  let x, y;
+  if (indexInQueue < capacity) {
+    const col = indexInQueue % cols;
+    const row = Math.floor(indexInQueue / cols);
+    x = box.x + 18 + col * cellW;
+    y = box.y + 26 + row * cellH;
+  } else {
+    const oIdx = indexInQueue - capacity;
+    const oCol = Math.floor(oIdx / maxRows);
+    const oRow = oIdx % maxRows;
+    x = box.x - 18 - oCol * cellW;
+    y = box.y + 26 + oRow * cellH;
+  }
   item.parkedPos = { x, y };
   item.phaseStartMs = performance.now();
   item.fromPos = item.parkedPos;
