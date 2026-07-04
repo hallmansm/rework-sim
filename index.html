@@ -297,6 +297,9 @@ function freshState() {
     // Stats
     balksSinceTick: 0,
     backlogHist: [],   // backlog depth per day — the banner's collapse signal is OBSERVED growth, not parameter math
+    intakeSinceTick: 0,  // passes entering Process since last tick (direct entries + pulls + rework)
+    dailyArrivals: [],   // measured arrivals per day
+    dailyIntake: [],     // measured intake (passes) per day
     totalShipped: 0,
     totalDefectsCreated: 0,
     totalReworkCycles: 0,
@@ -444,6 +447,11 @@ function readParams() {
 function simTick(P) {
   let shippedThisTick = 0;
 
+  // Close out the day that just ended: bank its measured intake tally.
+  state.dailyIntake.push(state.intakeSinceTick);
+  state.intakeSinceTick = 0;
+  if (state.dailyIntake.length > 60) state.dailyIntake.shift();
+
   // 1. END OF DAY: every item currently parked IN_PROCESS completes its work
   //    and ships (or defects). Items still in-flight TO Process (PULLING,
   //    REWORKING) stay where they are — they'll arrive in Process during the
@@ -508,6 +516,7 @@ function simTick(P) {
     // through the switch. All aboard well before the next tick.
     it.tweenDurationMs = Math.min(0.35, 0.12 + 0.04 * i) * P.dayMs;
     state.inProcess.push(id);
+    state.intakeSinceTick++;
   }
   slotsAvailable -= reworkSlots;
 
@@ -525,6 +534,7 @@ function simTick(P) {
     // "ghost dots" left behind by the shipping greens.
     it.tweenDurationMs = Math.min(0.4, 0.15 + 0.03 * i) * P.dayMs;
     state.inProcess.push(id);
+    state.intakeSinceTick++;
   }
 
   // 3. SPAWN THIS DAY'S ARRIVALS. Each item reaches the Product Backlog at a
@@ -542,6 +552,8 @@ function simTick(P) {
     item.phaseStartMs = tickStart;
     item.tweenDurationMs = ((i + 1) / (arrivals + 1)) * P.dayMs;
   }
+  state.dailyArrivals.push(arrivals);
+  if (state.dailyArrivals.length > 60) state.dailyArrivals.shift();
 
   // 4. RE-PARK already-parked items into their (possibly shifted) slot positions.
   state.backlog.forEach((id, idx) => {
@@ -619,6 +631,7 @@ function handleTransitComplete(item, P) {
         setTransit(item, "ENTERING");
         item.tweenDurationMs = 0.18 * P.dayMs;
         state.inProcess.push(item.id);
+        state.intakeSinceTick++;
       } else {
         state.balksSinceTick++;
         setTransit(item, "DIVERTING");
@@ -1033,9 +1046,19 @@ function updateMetrics(P, lastTick) {
   const st = document.getElementById("statusText");
   sb.className = "";
   // The pair that tells the rework story at a glance: what the world sends
-  // vs what the team must actually swallow. The gap is self-inflicted.
-  document.getElementById("arrPill").textContent = P.arrivalRate.toFixed(2) + "/day";
-  document.getElementById("intakePill").textContent = lambdaEff.toFixed(2) + "/day";
+  // vs what the team must actually swallow. Both MEASURED (rolling 10-day
+  // averages of counted events), never parameter math. The gap between the
+  // two pills is the rework backwash, observed.
+  const avg10 = arr => {
+    if (arr.length === 0) return null;
+    const win = arr.slice(-10);
+    return win.reduce((a,b)=>a+b,0) / win.length;
+  };
+  const mArr = avg10(state.dailyArrivals);
+  // dailyIntake[0] closes "day 0" (which didn't exist) — skip the warmup zero.
+  const mIntake = avg10(state.dailyIntake.length > 1 ? state.dailyIntake.slice(1) : []);
+  document.getElementById("arrPill").textContent = mArr === null ? "—" : mArr.toFixed(2) + "/day";
+  document.getElementById("intakePill").textContent = mIntake === null ? "—" : mIntake.toFixed(2) + "/day";
   const bh = state.backlogHist;
   const backlogNow = state.backlog.length;
   const weekAgo = bh.length >= 8 ? bh[bh.length - 8] : 0;
