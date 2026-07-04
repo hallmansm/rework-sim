@@ -168,7 +168,7 @@
 <details open>
   <summary>What this is showing &mdash; and why "33% rework" doesn't mean "33% slower"</summary>
   <p>This is a single-station queueing model with feedback. Items arrive at rate <b>&lambda;</b>, the team works at rate <b>&mu;</b>, and a fraction <b>d</b> of completed items come back to be reworked.</p>
-  <p>Arrivals head straight for Production. The balk turnout only sends an item up to the Product Backlog when Production is at capacity &mdash; or when the backlog already holds someone (strict FIFO, no line-jumping). The team pulls waiting work into Process at the <b>switch</b>, where two lines merge: items pulled down from the backlog, and defects climbing back up from the Defect Queue for another full pass. The rework policy sets the switch. Because every defect must be served again, the effective arrival rate the team must serve is <b>&lambda;<sub>eff</sub> = &lambda; / (1 &minus; d)</b>. The team's utilization is <b>&rho; = &lambda;<sub>eff</sub> / &mu;</b>. As &rho; approaches 1, queues grow without bound &mdash; the bottleneck collapses.</p>
+  <p>Arrivals head straight for Production. The balk turnout only sends an item up to the Product Backlog when Production is at capacity &mdash; or when the backlog already holds someone (strict FIFO, no line-jumping). The team pulls waiting work into Process at the <b>switch</b>, where two lines merge: items pulled down from the backlog, and defects climbing back up from the Defect Queue for another full pass. The rework policy sets the switch. Because every defect must be served again, rework doesn't add arrivals &mdash; it multiplies <em>passes</em>: the team's total service demand is <b>&lambda; / (1 &minus; d)</b> passes per day (new items plus the repeat passes defects buy). Utilization is <b>&rho; = demand / &mu;</b>. As &rho; approaches 1, queues grow without bound &mdash; the bottleneck collapses.</p>
   <ul>
     <li>&lambda;=9, &mu;=10, d=0 &rarr; &rho; = 0.90 (comfortable)</li>
     <li>&lambda;=9, &mu;=10, d=0.10 &rarr; &rho; = 1.00 (on the edge)</li>
@@ -1039,7 +1039,7 @@ function updateMetrics(P, lastTick) {
     st.textContent = "Idle — press Start";
   } else if (bh.length >= 8 && growth >= 5 && backlogNow >= 8) {
     sb.classList.add("status-collapse");
-    st.textContent = `COLLAPSE: backlog up ${growth} in the last 7 days and climbing — effective arrival ${lambdaEff.toFixed(2)}/day exceeds capacity ${P.processRate} (ρ=${rho.toFixed(2)})`;
+    st.textContent = `COLLAPSE: backlog up ${growth} in the last 7 days and climbing — the team must serve ${lambdaEff.toFixed(2)} passes/day (${P.arrivalRate} new + ${(lambdaEff - P.arrivalRate).toFixed(2)} rework) against capacity ${P.processRate} (ρ=${rho.toFixed(2)})`;
   } else if (lastTick && lastTick.queuePressure) {
     sb.classList.add("status-balking");
     st.textContent = `Balking: Production full — arrivals diverted to the Product Backlog (ρ=${rho.toFixed(2)})`;

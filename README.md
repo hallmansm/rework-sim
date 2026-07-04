@@ -16,7 +16,8 @@ or just download `index.html` and double-click it. No install, no build, no depe
   return line merges at the same switch as the backlog pull — each open slot
   is fed from one line or the other, and the rework policy sets the switch.
 - Expected passes per shipped item = 1 + d + d² + … = **1/(1−d)** — a
-  geometric series. Effective arrival is λ/(1−d).
+  geometric series. Rework doesn't add arrivals; it multiplies passes: total
+  service demand on the team is λ/(1−d) passes per day.
 - Utilization ρ = λ/((1−d)·μ). The system is stable only while ρ < 1, so the
   critical defect rate is **d\* = 1 − λ/μ: your rework budget is exactly your
   slack.** Past it there is no steady state — the backlog grows every day,
