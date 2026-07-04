@@ -719,6 +719,16 @@ function drawDiagram(queuePressure) {
   const feedColor    = "#8a8676";
   const pblColor     = queuePressure ? "#e89320" : arrivalColor;
 
+  // 0. The mainline — ONE continuous track from the left edge to Process.
+  //    It runs unbroken under the backlog's in (x=340) and out (x=430)
+  //    verticals; those are turnouts off the mainline, not breaks in it.
+  ctx.strokeStyle = feedColor;
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(layout.arrivalStart.x, layout.arrivalStart.y);
+  ctx.lineTo(layout.processIn.x, layout.processIn.y);
+  ctx.stroke();
+
   // 1. Arrivals (gray; orange when the backlog is holding work the team
   //    couldn't pull): in from the left, up into the Product Backlog.
   drawPolyArrow([layout.arrivalStart, layout.pblTurn, layout.pblEnter], pblColor, queuePressure ? 3 : 2.5);
@@ -776,7 +786,7 @@ function drawDiagram(queuePressure) {
   ctx.fillText("pull ↓", layout.pullExit.x + 6, 290);
   ctx.fillStyle = "#cc4a3a";
   ctx.textAlign = "right";
-  ctx.fillText("rework ↑", layout.defectExit.x - 6, 425);
+  ctx.fillText("rework ↑", layout.defectExit.x - 6, 405);
 
   // Arrival label
   ctx.fillStyle = "#5d6b7a";
