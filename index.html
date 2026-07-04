@@ -331,7 +331,7 @@ function freshState() {
     leadTimes: [],
     dailyShipped: [],     // shipped count per day
     history: {            // for chart
-      day: [], shipped: [], defects: [], ceiling: [], backlog: [],
+      day: [], shipped: [], defects: [], ceiling: [], backlog: [], level: [],
     },
 
     // For "items arriving at door this tick", we track items in ARRIVING transit
@@ -648,7 +648,26 @@ function simTick(P) {
   const queuePressure = (eligibleBacklog.length - pullCount) > 0;
   state.backlogHist.push(state.backlog.length);
   if (state.backlogHist.length > 60) state.backlogHist.shift();
-  return { queuePressure, capacity, reworkSlots, pulledFromBacklog: pullCount };
+
+  // Classify today's observed state (0 stable / 1 critical / 2 supercritical)
+  // — drives the banner AND the per-day state strip on the chart. The strip's
+  // flicker frequency IS the early warning: solid green, blinking amber,
+  // solid red.
+  const bhh = state.backlogHist;
+  const bGrowth = state.backlog.length - (bhh.length >= 8 ? bhh[bhh.length - 8] : 0);
+  const dhh = state.history.defects;
+  const dGrowth = (dhh.length ? dhh[dhh.length - 1] : 0) - (dhh.length >= 8 ? dhh[dhh.length - 8] : 0);
+  const dqNow = state.defectQueue.length;
+  let level = 0, reason = "stable";
+  if (bhh.length >= 8 && bGrowth >= 5 && state.backlog.length >= 8) { level = 2; reason = "backlog-collapse"; }
+  else if (dhh.length >= 8 && dGrowth >= 5 && dqNow >= 8) { level = 2; reason = "defect-collapse"; }
+  else if (queuePressure) { level = 1; reason = "pressure"; }
+  else if (dqNow >= 10 || (dhh.length >= 8 && dGrowth >= 2 && dqNow >= 5)) { level = 1; reason = "rework-debt"; }
+  state.history.level.push(level);
+  if (state.history.level.length > 400) state.history.level.shift();
+
+  return { queuePressure, capacity, reworkSlots, pulledFromBacklog: pullCount,
+           level, reason, bGrowth, dGrowth, dqNow };
 }
 
 // EVENT-DRIVEN per-frame transition checks. Runs every RAF frame, before
@@ -1040,6 +1059,26 @@ function drawChart() {
   // Product Backlog depth on the SAME items scale — flat on the floor when
   // healthy, climbing steadily in collapse. One scale, no hidden axes.
   plot(state.history.backlog, "#e89320", maxY1, 2);
+
+  // State strip: one colored tick per day across the top — green / amber /
+  // red per that day's observed classification. The flicker frequency IS the
+  // story: solid green → blinking amber → solid red.
+  const levels = state.history.level;
+  if (levels && levels.length > 1) {
+    const stripColors = ["#2f7d39", "#d19a13", "#c0392b"];
+    const n = levels.length;
+    for (let i = 0; i < n; i++) {
+      cctx.fillStyle = stripColors[levels[i]] || "#999";
+      const x0 = padL + (i / n) * plotW;
+      const w = Math.max(1, plotW / n);
+      cctx.fillRect(x0, 1, w + 0.5, 6);
+    }
+    cctx.fillStyle = "#7c8794";
+    cctx.font = "9px system-ui";
+    cctx.textAlign = "right";
+    cctx.textBaseline = "alphabetic";
+    cctx.fillText("state / day", padL - 4, 8);
+  }
 }
 
 // ===================================================================
@@ -1124,37 +1163,28 @@ function updateMetrics(P, lastTick) {
   const mIntake = avg10(state.dailyIntake.length > 1 ? state.dailyIntake.slice(1) : []);
   document.getElementById("arrPill").textContent = mArr === null ? "—" : mArr.toFixed(2) + "/day";
   document.getElementById("intakePill").textContent = mIntake === null ? "—" : mIntake.toFixed(2) + "/day";
-  const bh = state.backlogHist;
-  const backlogNow = state.backlog.length;
-  const weekAgo = bh.length >= 8 ? bh[bh.length - 8] : 0;
-  const growth = backlogNow - weekAgo;
-  // The second nightclub: a diverging DEFECT queue is a collapse too — it
-  // happens when the policy serves rework slower than defects arrive (mix
-  // below the defect rate), even while features flow happily.
-  const dh = state.history.defects;
-  const dqNow = state.defectQueue.length;
-  const dqWeekAgo = dh.length >= 8 ? dh[dh.length - 8] : 0;
-  const dqGrowth = (dh.length ? dh[dh.length - 1] : 0) - dqWeekAgo;
-  if (state.day === 0) {
+  // The banner reads the classification simTick already made (one source of
+  // truth for banner + state strip); it only composes the message text here.
+  if (state.day === 0 || !lastTick || lastTick.reason === undefined) {
     sb.classList.add("status-normal");
     setState("Idle", "#6b7683");
     st.textContent = "Idle — press Start";
-  } else if (bh.length >= 8 && growth >= 5 && backlogNow >= 8) {
+  } else if (lastTick.reason === "backlog-collapse") {
     sb.classList.add("status-collapse");
     setState("Supercritical", "#7a1c10");
-    st.textContent = `COLLAPSE: backlog up ${growth} in the last 7 days and climbing — the team must serve ${lambdaEff.toFixed(2)} passes/day (${P.arrivalRate} new + ${(lambdaEff - P.arrivalRate).toFixed(2)} rework) against capacity ${P.processRate} (ρ=${rho.toFixed(2)})`;
-  } else if (dh.length >= 8 && dqGrowth >= 5 && dqNow >= 8) {
+    st.textContent = `COLLAPSE: backlog up ${lastTick.bGrowth} in the last 7 days and climbing — the team must serve ${lambdaEff.toFixed(2)} passes/day (${P.arrivalRate} new + ${(lambdaEff - P.arrivalRate).toFixed(2)} rework) against capacity ${P.processRate} (ρ=${rho.toFixed(2)})`;
+  } else if (lastTick.reason === "defect-collapse") {
     sb.classList.add("status-collapse");
     setState("Supercritical", "#7a1c10");
-    st.textContent = `COLLAPSE: defect queue up ${dqGrowth} in the last 7 days — the policy serves rework slower than defects arrive, while features ship on time`;
-  } else if (lastTick && lastTick.queuePressure) {
+    st.textContent = `COLLAPSE: defect queue up ${lastTick.dGrowth} in the last 7 days — the policy serves rework slower than defects arrive, while features ship on time`;
+  } else if (lastTick.reason === "pressure") {
     sb.classList.add("status-balking");
     setState("Critical", "#8a6a00");
     st.textContent = `Queue pressure: backlog work waited a full day and still couldn't be pulled (ρ=${rho.toFixed(2)})`;
-  } else if (dqNow >= 10 || (dh.length >= 8 && dqGrowth >= 2 && dqNow >= 5)) {
+  } else if (lastTick.reason === "rework-debt") {
     sb.classList.add("status-balking");
     setState("Critical", "#8a6a00");
-    st.textContent = `Rework debt: ${dqNow} defects waiting — the mix rate is serving rework slower than the defect rate creates it`;
+    st.textContent = `Rework debt: ${lastTick.dqNow} defects waiting — the mix rate is serving rework slower than the defect rate creates it`;
   } else {
     sb.classList.add("status-normal");
     setState("Stable", "#1c5b34");
