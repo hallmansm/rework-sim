@@ -75,7 +75,7 @@
 
 <header>
   <h1>Flow Simulation &mdash; the rework backwash effect</h1>
-  <div class="sub">One process box. Arrivals come from the left; defects loop back through the same door. Watch what 33% rework does to throughput &mdash; not 33% slower, but a cliff.</div>
+  <div class="sub">One process box. Every arrival enters the Product Backlog; the team pulls from it, and defects loop back to the same switch. Watch what 33% rework does to throughput &mdash; not 33% slower, but a cliff.</div>
 </header>
 
 <div id="panel">
@@ -168,7 +168,7 @@
 <details open>
   <summary>What this is showing &mdash; and why "33% rework" doesn't mean "33% slower"</summary>
   <p>This is a single-station queueing model with feedback. Items arrive at rate <b>&lambda;</b>, the team works at rate <b>&mu;</b>, and a fraction <b>d</b> of completed items come back to be reworked.</p>
-  <p>Because rework re-enters at the same door as new work, the effective arrival rate the team must serve is <b>&lambda;<sub>eff</sub> = &lambda; / (1 &minus; d)</b>. The team's utilization is <b>&rho; = &lambda;<sub>eff</sub> / &mu;</b>. As &rho; approaches 1, queues grow without bound &mdash; the bottleneck collapses.</p>
+  <p>Every arrival enters the Product Backlog &mdash; nothing bypasses it. The team pulls work into Process at the <b>switch</b>, where two lines merge: new items pulled down from the backlog, and defects climbing back up from the Defect Queue for another full pass. The rework policy sets the switch. Because every defect must be served again, the effective arrival rate the team must serve is <b>&lambda;<sub>eff</sub> = &lambda; / (1 &minus; d)</b>. The team's utilization is <b>&rho; = &lambda;<sub>eff</sub> / &mu;</b>. As &rho; approaches 1, queues grow without bound &mdash; the bottleneck collapses.</p>
   <ul>
     <li>&lambda;=9, &mu;=10, d=0 &rarr; &rho; = 0.90 (comfortable)</li>
     <li>&lambda;=9, &mu;=10, d=0.10 &rarr; &rho; = 1.00 (on the edge)</li>
@@ -185,13 +185,14 @@
 // LAYOUT
 // ===================================================================
 const W = 1280, H = 640;
-// All horizontal flow is on y=380. Vertical tracks are SEPARATED so each
-// arrow has its own column and there's no visual backflow on shared lines.
+// All horizontal flow is on y=380. Every arrival enters the Product Backlog
+// (nothing bypasses it). The team pulls from the PBL down to the SWITCH at
+// x=430; defect rework climbs from the defect queue to the SAME switch. One
+// node feeds Process; the rework policy decides which line the switch reads.
 const layout = {
   arrivalStart: { x:  30, y: 380 },
-  divertBranch: { x: 340, y: 380 },  // where ARRIVING ends; either continue right or turn up
-  door:         { x: 380, y: 380 },  // visual junction (and where REWORK rejoins main flow)
-  pullJoin:     { x: 430, y: 380 },  // where PULL rejoins the main flow
+  pblTurn:      { x: 340, y: 380 },  // arrivals turn up into the Product Backlog here
+  switchNode:   { x: 430, y: 380 },  // THE SWITCH: PBL pull (from above) + rework (from below) merge here
   processIn:    { x: 600, y: 380 },
   processOut:   { x: 960, y: 380 },
   shipTurn:     { x:1180, y: 380 },
@@ -200,10 +201,10 @@ const layout = {
   defectTurn2:  { x:1080, y: 520 },
   defectBoxRight:{x: 450, y: 520 },
 
-  // Connection points on the queue boxes (so vertical tracks are clearly separated)
-  divertEnter:  { x: 340, y: 200 },  // bottom of backlog, left side
-  pullExit:     { x: 430, y: 200 },  // bottom of backlog, right side
-  defectExit:   { x: 380, y: 440 },  // top of defect queue (vertical up, into door)
+  // Connection points on the queue boxes
+  pblEnter:     { x: 340, y: 200 },  // bottom of backlog, left side (arrivals in)
+  pullExit:     { x: 430, y: 200 },  // bottom of backlog, right side (pulls out, straight down to the switch)
+  defectExit:   { x: 430, y: 440 },  // top of defect queue (straight up to the switch)
 
   backlogBox:  { x: 250, y:  60, w: 200, h: 140 },
   processBox:  { x: 560, y: 280, w: 400, h: 200 },
@@ -211,16 +212,15 @@ const layout = {
   shippedBox:  { x: 1080, y: 60, w: 200, h: 140 },
 };
 
-// Polylines for each transit phase (start -> end). Each vertical column is
-// one-way: divert up at x=340, pull down at x=430, rework up at x=380.
+// Polylines for each transit phase (start -> end). Arrivals go up at x=340;
+// pull comes down and rework comes up on the shared x=430 column, meeting the
+// mainline at the switch.
 const paths = {
-  ARRIVING:    [layout.arrivalStart, layout.divertBranch],
-  ENTERING:    [layout.divertBranch, layout.processIn],
-  DIVERTING:   [layout.divertBranch, layout.divertEnter],
-  PULLING:     [layout.pullExit, layout.pullJoin, layout.processIn],
+  ARRIVING:    [layout.arrivalStart, layout.pblTurn, layout.pblEnter],
+  PULLING:     [layout.pullExit, layout.switchNode, layout.processIn],
   SHIPPING:    [layout.processOut, layout.shipTurn, layout.shipTop],
   DEFECTING:   [layout.processOut, layout.defectTurn1, layout.defectTurn2, layout.defectBoxRight],
-  REWORKING:   [layout.defectExit, layout.door, layout.processIn],
+  REWORKING:   [layout.defectExit, layout.switchNode, layout.processIn],
 };
 
 // ===================================================================
@@ -314,7 +314,7 @@ function makeItem() {
     phase: "ARRIVING",
     phaseStartMs: performance.now(),
     fromPos: { ...layout.arrivalStart },
-    toPos:   { ...layout.divertBranch },
+    toPos:   { ...layout.pblEnter },
     path: paths.ARRIVING,
     parkedPos: null,
     createdDay: state.day,
@@ -418,24 +418,25 @@ function readParams() {
 
 // EVENT-DRIVEN MODEL:
 //   - simTick fires once per "day" (every dayMs ms). It handles end-of-day
-//     events (items in Process ship), start-of-day events (pull from PBL),
-//     and spawns the day's arrivals with staggered times across the day.
+//     events (items in Process ship), start-of-day events (pull from PBL /
+//     defect queue at the switch), and spawns the day's arrivals with
+//     staggered times across the day. EVERY arrival enters the Product
+//     Backlog — nothing bypasses it into Process.
 //   - checkItemTransitions runs every frame. When an item's tween reaches
-//     t=1, its phase transition fires — admission decision (ARRIVING done),
-//     park-into-process (ENTERING/PULLING/REWORKING done), park-into-queue
-//     (DIVERTING/DEFECTING done), or count-as-shipped (SHIPPING done).
+//     t=1, its phase transition fires — park-into-backlog (ARRIVING done),
+//     park-into-process (PULLING/REWORKING done), park-into-defect-queue
+//     (DEFECTING done), or park-into-shipped (SHIPPING done).
 //   - state.inProcess always holds every item logically occupying a Process
-//     slot, even while it's still tweening in. That's why slot-count checks
-//     at the door correctly reflect committed capacity.
-//   - state.backlog always holds every item logically in the backlog,
-//     including items still tweening toward the box.
+//     slot, even while it's still tweening in.
+//   - state.backlog holds items actually parked in the backlog box; arrivals
+//     still in flight join it when their ARRIVING tween completes.
 function simTick(P) {
   let shippedThisTick = 0;
 
   // 1. END OF DAY: every item currently parked IN_PROCESS completes its work
-  //    and ships (or defects). Items still in-flight TO Process (ENTERING,
-  //    PULLING, REWORKING) stay where they are — they'll arrive in Process
-  //    during the next day and ship the day after.
+  //    and ships (or defects). Items still in-flight TO Process (PULLING,
+  //    REWORKING) stay where they are — they'll arrive in Process during the
+  //    next day and ship the day after.
   const completing = state.inProcess.filter(id => {
     const it = state.items.get(id);
     return it && it.phase === "IN_PROCESS";
@@ -465,7 +466,7 @@ function simTick(P) {
 
   // 2. START OF DAY: with Process slots now (mostly) freed, pull from backlog
   //    FIFO. Only items actually parked in the backlog box are eligible —
-  //    items still in DIVERTING transit haven't arrived yet.
+  //    items still in ARRIVING transit haven't landed yet.
   const capacity = P.processRate;
   let slotsAvailable = Math.max(0, capacity - state.inProcess.length);
 
@@ -492,9 +493,8 @@ function simTick(P) {
     if (dIdx >= 0) state.defectQueue.splice(dIdx, 1);
     const it = state.items.get(id);
     setTransit(it, "REWORKING");
-    // Fast animation: rework items must clear the defect queue visually before
-    // fresh items arrive at the door, or the strict-FIFO rule sees the queue
-    // as non-empty when it's logically empty.
+    // Fast animation: pulled items clear their queue box quickly so the
+    // re-park grid doesn't shuffle around them mid-flight.
     it.tweenDurationMs = 0.05 * P.dayMs;
     state.inProcess.push(id);
   }
@@ -509,15 +509,13 @@ function simTick(P) {
     if (bIdx >= 0) state.backlog.splice(bIdx, 1);
     const it = state.items.get(id);
     setTransit(it, "PULLING");
-    // Same reason: PBL must be visually empty before the first fresh item
-    // reaches the door (which happens around 1/(N+1) of the day).
     it.tweenDurationMs = 0.05 * P.dayMs;
     state.inProcess.push(id);
   }
 
-  // 3. SPAWN THIS DAY'S ARRIVALS. Each item arrives at the door at a different
-  //    fraction of the day — item i of N arrives at (i+1)/(N+1) of the day.
-  //    Admission decision fires (event-driven) when each one reaches the door.
+  // 3. SPAWN THIS DAY'S ARRIVALS. Each item reaches the Product Backlog at a
+  //    different fraction of the day — item i of N lands at (i+1)/(N+1) of
+  //    the day. It becomes pullable at the next start-of-day.
   let arrivals;
   if (P.arrivalMode === "deterministic") {
     arrivals = Math.round(P.arrivalRate);
@@ -572,10 +570,9 @@ function simTick(P) {
 
   state.day++;
 
-  // Balking = backlog has something OR there's an item currently in transit to backlog.
-  const balking = state.backlog.length > 0 ||
-    Array.from(state.items.values()).some(it => it.phase === "DIVERTING");
-  return { balking, capacity, reworkSlots, admittedAtDoor: 0, pulledFromBacklog: pullCount };
+  // Queue pressure = the backlog still holds work this tick's pull couldn't take.
+  const queuePressure = (eligibleBacklog.length - pullCount) > 0;
+  return { queuePressure, capacity, reworkSlots, pulledFromBacklog: pullCount };
 }
 
 // EVENT-DRIVEN per-frame transition checks. Runs every RAF frame, before
@@ -595,40 +592,18 @@ function checkItemTransitions(now, P) {
 function handleTransitComplete(item, P) {
   switch (item.phase) {
     case "ARRIVING": {
-      // Reached door. Strict FIFO admission:
-      //   admit ONLY IF (Process has open slots) AND (PBL is empty).
-      // If anything is in PBL, fresh items join the back of the line — no
-      // bypassing. PBL count here = items actually parked in the box
-      // (DIVERTING items in flight aren't counted; they're added at completion).
-      const slotsUsed = state.inProcess.length;
-      const backlogEmpty = state.backlog.length === 0;
-      if (slotsUsed < P.processRate && backlogEmpty) {
-        setTransit(item, "ENTERING");
-        item.tweenDurationMs = 0.15 * P.dayMs;
-        state.inProcess.push(item.id);
-      } else {
-        setTransit(item, "DIVERTING");
-        item.tweenDurationMs = 0.2 * P.dayMs;
-        // NOTE: do NOT push to state.backlog here. The item is in flight to
-        // PBL, not yet IN_BACKLOG. It joins state.backlog when DIVERTING
-        // completes. Keeps state.backlog as the single source of truth for
-        // "what's actually in the queue."
-      }
+      // Reached the Product Backlog. EVERY arrival lands here — nothing
+      // bypasses the backlog into Process. It becomes pullable at the next
+      // start-of-day, when the switch feeds Process from PBL + defect queue.
+      state.backlog.push(item.id);
+      parkInBox(item, "IN_BACKLOG", layout.backlogBox, state.backlog.length - 1);
       break;
     }
-    case "ENTERING":
     case "PULLING":
     case "REWORKING": {
       // Reached Process slot. Park in grid.
       const idx = state.inProcess.indexOf(item.id);
       parkInProcess(item, idx >= 0 ? idx : state.inProcess.length);
-      break;
-    }
-    case "DIVERTING": {
-      // Reached backlog box. NOW it counts as IN_BACKLOG — add to state.backlog
-      // and park in stack. This is the moment "in PBL" becomes true logically.
-      state.backlog.push(item.id);
-      parkInBox(item, "IN_BACKLOG", layout.backlogBox, state.backlog.length - 1);
       break;
     }
     case "SHIPPING": {
@@ -729,36 +704,34 @@ function drawBox(box, title, countText, fill, stroke) {
   ctx.fillText(countText, box.x + box.w - 10, box.y + 18);
 }
 
-function drawDiagram(balking) {
+function drawDiagram(queuePressure) {
   ctx.clearRect(0, 0, W, H);
 
   // --- Arrows (drawn first, behind boxes) ---
   const arrivalColor = "#5d6b7a";
   const goodColor    = "#2f7d39";
   const defectColor  = "#cc4a3a";
-  const reworkColor  = "#cc4a3a";
-  const divertColor  = balking ? "#e89320" : "#bcc3cc";
   const pullColor    = "#4a90e2";
+  const feedColor    = "#8a8676";
+  const pblColor     = queuePressure ? "#e89320" : arrivalColor;
 
-  // 1. Arrival (gray, → ): arrivalStart -> divertBranch
-  drawPolyArrow([layout.arrivalStart, layout.divertBranch], arrivalColor, 2.5);
+  // 1. Arrivals (gray; orange when the backlog is holding work the team
+  //    couldn't pull): in from the left, up into the Product Backlog.
+  drawPolyArrow([layout.arrivalStart, layout.pblTurn, layout.pblEnter], pblColor, queuePressure ? 3 : 2.5);
 
-  // 2. Divert UP (orange when balking, light gray when idle): divertBranch -> backlog bottom (x=340)
-  drawPolyArrow([layout.divertBranch, layout.divertEnter], divertColor, balking ? 3 : 1.8);
+  // 2. Pull DOWN (blue, ↓ ): backlog bottom -> the switch
+  drawPolyArrow([layout.pullExit, layout.switchNode], pullColor, 2);
 
-  // 3. Main flow continuation (gray, → ): divertBranch -> processIn (this is where ENTERING, PULL and REWORK all converge)
-  drawPolyArrow([layout.divertBranch, layout.processIn], "#8a8676", 2.5);
+  // 3. Rework UP (red, ↑ ): defect queue top -> the same switch
+  drawPolyArrow([layout.defectExit, layout.switchNode], defectColor, 2);
 
-  // 4. Pull DOWN (blue, ↓ ): backlog bottom -> joins main flow (x=430)
-  drawPolyArrow([layout.pullExit, layout.pullJoin], pullColor, 1.8);
+  // 4. Feed (dark, → ): switch -> Process
+  drawPolyArrow([layout.switchNode, layout.processIn], feedColor, 2.5);
 
-  // 5. Rework UP (red, ↑ ): defect queue top -> joins main flow at door (x=380)
-  drawPolyArrow([layout.defectExit, layout.door], reworkColor, 2);
-
-  // 6. Process -> shipped (green, → ↑ )
+  // 5. Process -> shipped (green, → ↑ )
   drawPolyArrow([layout.processOut, layout.shipTurn, layout.shipTop], goodColor, 2.5);
 
-  // 7. Process -> defect queue (red, → ↓ ← )
+  // 6. Process -> defect queue (red, → ↓ ← )
   drawPolyArrow([layout.processOut, layout.defectTurn1, layout.defectTurn2, layout.defectBoxRight], defectColor, 2.5);
 
   // --- Boxes ---
@@ -771,39 +744,35 @@ function drawDiagram(balking) {
   drawBox(layout.shippedBox, "Shipped",
     `${state.totalShipped}`, "#eaf7ef", "#9dd9b7");
 
-  // Door indicator (always a circle at the visual junction)
-  ctx.fillStyle = balking ? "#e89320" : "#4a90e2";
+  // THE SWITCH — one node feeds Process; the rework policy decides whether
+  // the next open slot pulls from the backlog (blue) or the defect queue (red).
+  ctx.fillStyle = "#1f2a37";
   ctx.strokeStyle = "#fff";
   ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.arc(layout.door.x, layout.door.y, 9, 0, Math.PI * 2);
+  ctx.arc(layout.switchNode.x, layout.switchNode.y, 9, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
-
-  // Branch-point indicator (where divert decision happens)
-  ctx.fillStyle = balking ? "#e89320" : "#bcc3cc";
-  ctx.beginPath();
-  ctx.arc(layout.divertBranch.x, layout.divertBranch.y, 5, 0, Math.PI * 2);
-  ctx.fill();
 
   // Labels
   ctx.fillStyle = "#5d6b7a";
   ctx.font = "11px system-ui";
   ctx.textAlign = "left";
   ctx.textBaseline = "alphabetic";
-  ctx.fillText("door", layout.door.x + 12, layout.door.y + 22);
-  ctx.fillText("(decision)", layout.door.x + 12, layout.door.y + 35);
+  ctx.fillText("switch", layout.switchNode.x + 14, layout.switchNode.y + 22);
+  ctx.fillText("(rework policy)", layout.switchNode.x + 14, layout.switchNode.y + 35);
 
   // Track labels (small, next to each vertical arrow)
   ctx.font = "10px system-ui";
-  ctx.fillStyle = balking ? "#a85f00" : "#7c8794";
+  ctx.fillStyle = queuePressure ? "#a85f00" : "#7c8794";
   ctx.textAlign = "right";
-  ctx.fillText("divert ↑", layout.divertEnter.x - 6, 290);
+  ctx.fillText("arrivals ↑", layout.pblEnter.x - 6, 290);
   ctx.fillStyle = "#4a90e2";
   ctx.textAlign = "left";
   ctx.fillText("pull ↓", layout.pullExit.x + 6, 290);
   ctx.fillStyle = "#cc4a3a";
-  ctx.fillText("rework ↑", layout.defectExit.x + 6, 410);
+  ctx.textAlign = "right";
+  ctx.fillText("rework ↑", layout.defectExit.x - 6, 425);
 
   // Arrival label
   ctx.fillStyle = "#5d6b7a";
@@ -1011,9 +980,9 @@ function updateMetrics(P, lastTick) {
   } else if (rho >= 0.95) {
     sb.classList.add("status-balking");
     st.textContent = `At the edge: effective arrival ${lambdaEff.toFixed(2)}/day vs capacity ${P.processRate} (ρ=${rho.toFixed(2)})`;
-  } else if (lastTick && lastTick.balking) {
+  } else if (lastTick && lastTick.queuePressure) {
     sb.classList.add("status-balking");
-    st.textContent = `Balking: arrivals diverted to backlog this tick (ρ=${rho.toFixed(2)})`;
+    st.textContent = `Queue forming: the Product Backlog holds work the team couldn't pull this day (ρ=${rho.toFixed(2)})`;
   } else {
     sb.classList.add("status-normal");
     st.textContent = `Stable flow (ρ=${rho.toFixed(2)})`;
@@ -1037,7 +1006,7 @@ function loop(now) {
     // Event-driven transitions every frame (admission, parking, etc.)
     checkItemTransitions(now, P);
   }
-  drawDiagram(lastTickInfo ? lastTickInfo.balking : false);
+  drawDiagram(lastTickInfo ? lastTickInfo.queuePressure : false);
   drawItems(P);
   requestAnimationFrame(loop);
 }

@@ -8,9 +8,12 @@ or just download `index.html` and double-click it. No install, no build, no depe
 
 ## The model
 
-- Work arrives at rate **λ** per day; the team processes **μ** items per day.
-- A fraction **d** of completed items come back as defects and re-enter
-  through the same door as new work.
+- Work arrives at rate **λ** per day; every arrival enters the Product
+  Backlog — nothing bypasses it. The team pulls into Process at a switch and
+  works at **μ** items per day.
+- A fraction **d** of completed items come back as defects. The defect queue's
+  return line merges at the same switch as the backlog pull — each open slot
+  is fed from one line or the other, and the rework policy sets the switch.
 - Expected passes per shipped item = 1 + d + d² + … = **1/(1−d)** — a
   geometric series. Effective arrival is λ/(1−d).
 - Utilization ρ = λ/((1−d)·μ). The system is stable only while ρ < 1, so the
