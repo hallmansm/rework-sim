@@ -294,6 +294,7 @@ function freshState() {
 
     // Stats
     balksSinceTick: 0,
+    backlogHist: [],   // backlog depth per day — the banner's collapse signal is OBSERVED growth, not parameter math
     totalShipped: 0,
     totalDefectsCreated: 0,
     totalReworkCycles: 0,
@@ -585,6 +586,8 @@ function simTick(P) {
   // backlog still holds work this tick's pull couldn't take.
   const queuePressure = state.balksSinceTick > 0 || (eligibleBacklog.length - pullCount) > 0;
   state.balksSinceTick = 0;
+  state.backlogHist.push(state.backlog.length);
+  if (state.backlogHist.length > 60) state.backlogHist.shift();
   return { queuePressure, capacity, reworkSlots, pulledFromBacklog: pullCount };
 }
 
@@ -1019,21 +1022,27 @@ function updateMetrics(P, lastTick) {
   const reworkLoad = cap === 0 ? 0 : (lastTick ? lastTick.reworkSlots / cap : 0);
   document.getElementById("reworkPill").textContent = Math.round(reworkLoad * 100) + "%";
 
-  // theoretical utilization for status decision
+  // Status banner: the COLOR is driven by what has actually happened (observed
+  // backlog growth / live balking), never by the input parameters alone. The
+  // ρ math rides along in the text as the explanation, not the verdict.
   const lambdaEff = P.arrivalRate / Math.max(0.0001, 1 - P.defectRate);
   const rho = lambdaEff / P.processRate;
   const sb = document.getElementById("statusBar");
   const st = document.getElementById("statusText");
   sb.className = "";
-  if (rho > 1.02) {
+  const bh = state.backlogHist;
+  const backlogNow = state.backlog.length;
+  const weekAgo = bh.length >= 8 ? bh[bh.length - 8] : 0;
+  const growth = backlogNow - weekAgo;
+  if (state.day === 0) {
+    sb.classList.add("status-normal");
+    st.textContent = "Idle — press Start";
+  } else if (bh.length >= 8 && growth >= 5 && backlogNow >= 8) {
     sb.classList.add("status-collapse");
-    st.textContent = `COLLAPSE: effective arrival ${lambdaEff.toFixed(2)}/day > capacity ${P.processRate} (ρ=${rho.toFixed(2)}) — queues grow without bound`;
-  } else if (rho >= 0.95) {
-    sb.classList.add("status-balking");
-    st.textContent = `At the edge: effective arrival ${lambdaEff.toFixed(2)}/day vs capacity ${P.processRate} (ρ=${rho.toFixed(2)})`;
+    st.textContent = `COLLAPSE: backlog up ${growth} in the last 7 days and climbing — effective arrival ${lambdaEff.toFixed(2)}/day exceeds capacity ${P.processRate} (ρ=${rho.toFixed(2)})`;
   } else if (lastTick && lastTick.queuePressure) {
     sb.classList.add("status-balking");
-    st.textContent = `Queue forming: the Product Backlog holds work the team couldn't pull this day (ρ=${rho.toFixed(2)})`;
+    st.textContent = `Balking: Production full — arrivals diverted to the Product Backlog (ρ=${rho.toFixed(2)})`;
   } else {
     sb.classList.add("status-normal");
     st.textContent = `Stable flow (ρ=${rho.toFixed(2)})`;
