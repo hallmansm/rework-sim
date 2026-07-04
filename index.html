@@ -448,6 +448,11 @@ function readParams() {
 function simTick(P) {
   let shippedThisTick = 0;
 
+  // Defect-queue depth at dawn — BEFORE the morning pull drains it. This is
+  // the chart's series; sampling after the pull always reads 0 under
+  // defect-first policy.
+  const defectsWaitingAtDawn = state.defectQueue.length;
+
   // Close out the day that just ended: bank its measured intake tally.
   state.dailyIntake.push(state.intakeSinceTick);
   state.intakeSinceTick = 0;
@@ -584,7 +589,7 @@ function simTick(P) {
   // 5. Chart history.
   state.history.day.push(state.day);
   state.history.shipped.push(state.totalShipped);
-  state.history.defects.push(state.defectQueue.length);
+  state.history.defects.push(defectsWaitingAtDawn);
   const ceilingPerDay = Math.min(P.arrivalRate, P.processRate);
   const prevCeiling = state.history.ceiling.length === 0 ? 0 : state.history.ceiling[state.history.ceiling.length - 1];
   state.history.ceiling.push(prevCeiling + ceilingPerDay);
@@ -1083,6 +1088,7 @@ function updateMetrics(P, lastTick) {
 // MAIN LOOP
 // ===================================================================
 let lastTickInfo = null;
+let lastMetricsRefreshMs = 0;
 
 function loop(now) {
   const P = readParams();
@@ -1095,6 +1101,13 @@ function loop(now) {
   if (state.running) {
     // Event-driven transitions every frame (admission, parking, etc.)
     checkItemTransitions(now, P);
+    // Live panel refresh: queue depths change mid-day as dots land, not just
+    // at ticks — sample continuously or the panel reads the dead post-pull
+    // instant forever.
+    if (now - lastMetricsRefreshMs >= 150) {
+      lastMetricsRefreshMs = now;
+      updateMetrics(P, lastTickInfo);
+    }
   }
   drawDiagram(lastTickInfo ? lastTickInfo.queuePressure : false);
   drawItems(P);
