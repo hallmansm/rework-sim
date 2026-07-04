@@ -118,6 +118,8 @@
 <div id="statusBar" class="status-normal">
   <span id="statusText">Idle &mdash; press Start</span>
   <span class="pill">Day <span id="dayPill">0</span></span>
+  <span class="pill">Effective arrival <span id="arrPill">&mdash;</span></span>
+  <span class="pill">Effective intake <span id="intakePill">&mdash;</span></span>
   <span class="pill">Utilization <span id="utilPill">0%</span></span>
   <span class="pill">Rework load <span id="reworkPill">0%</span></span>
 </div>
@@ -1030,6 +1032,10 @@ function updateMetrics(P, lastTick) {
   const sb = document.getElementById("statusBar");
   const st = document.getElementById("statusText");
   sb.className = "";
+  // The pair that tells the rework story at a glance: what the world sends
+  // vs what the team must actually swallow. The gap is self-inflicted.
+  document.getElementById("arrPill").textContent = P.arrivalRate.toFixed(2) + "/day";
+  document.getElementById("intakePill").textContent = lambdaEff.toFixed(2) + "/day";
   const bh = state.backlogHist;
   const backlogNow = state.backlog.length;
   const weekAgo = bh.length >= 8 ? bh[bh.length - 8] : 0;
