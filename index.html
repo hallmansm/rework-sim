@@ -492,10 +492,25 @@ function readParams() {
 function simTick(P) {
   let shippedThisTick = 0;
 
+  // 0. SETTLE THE DAY THAT JUST ENDED. Every arrival spawned during it
+  //    reaches the turnout before the day is over, so any still riding in
+  //    (only possible if frames stalled) takes its admission decision now, in
+  //    arrival order, against the slots as they stand at end of day. Defects
+  //    created at the last tick are in the queue by morning, landed or not.
+  //    After this block the sim's numbers are a function of parameters and
+  //    random draws only — frame rate cannot change them.
+  for (const it of state.items.values()) {
+    if (it.phase === "ARRIVING") handleTransitComplete(it, P);
+  }
+  const defectsInFlight = [];
+  for (const it of state.items.values()) {
+    if (it.phase === "DEFECTING") defectsInFlight.push(it.id);
+  }
+
   // Defect-queue depth at dawn — BEFORE the morning pull drains it. This is
   // the chart's series; sampling after the pull always reads 0 under
   // defect-first policy.
-  const defectsWaitingAtDawn = state.defectQueue.length;
+  const defectsWaitingAtDawn = state.defectQueue.length + defectsInFlight.length;
 
   // Close out the day that just ended: bank its measured intake tally.
   state.dailyIntake.push(state.intakeSinceTick);
@@ -541,7 +556,7 @@ function simTick(P) {
 
   // 2a. Rework pull from defect queue (policy-controlled).
   let reworkSlots = 0;
-  const eligibleDefects = state.defectQueue.filter(id => state.items.get(id)?.phase === "IN_DEFECT_QUEUE");
+  const eligibleDefects = state.defectQueue.filter(id => state.items.get(id)?.phase === "IN_DEFECT_QUEUE").concat(defectsInFlight);
   if (eligibleDefects.length > 0 && slotsAvailable > 0) {
     if (P.reworkPolicy === "priority") {
       reworkSlots = Math.min(eligibleDefects.length, slotsAvailable);
