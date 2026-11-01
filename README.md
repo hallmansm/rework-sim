@@ -1,4 +1,4 @@
-# Flow Simulation — the Rework Backwash Effect
+# The Defect Circulotron 3000 — the Rework Backwash Effect
 
 A single-file discrete event simulation showing why a team with 33% rework
 isn't "33% slower" — it's past a queueing cliff.
