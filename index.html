@@ -101,7 +101,7 @@
 <body>
 
 <header>
-  <h1>Flow Simulation &mdash; the rework backwash effect</h1>
+  <h1>The Defect Circulatron 3000 &mdash; the rework backwash effect</h1>
   <div class="sub">One process box. Arrivals head straight for Production; they only divert to the Product Backlog when Production balks at capacity &mdash; and defects loop back to the pull switch. Watch what 33% rework does to throughput &mdash; not 33% slower, but a cliff.</div>
 </header>
 
@@ -502,14 +502,14 @@ function simTick(P) {
   state.intakeSinceTick = 0;
   if (state.dailyIntake.length > 60) state.dailyIntake.shift();
 
-  // 1. END OF DAY: every item currently parked IN_PROCESS completes its work
-  //    and ships (or defects). Items still in-flight TO Process (PULLING,
-  //    REWORKING) stay where they are — they'll arrive in Process during the
-  //    next day and ship the day after.
-  const completing = state.inProcess.filter(id => {
-    const it = state.items.get(id);
-    return it && it.phase === "IN_PROCESS";
-  });
+  // 1. END OF DAY: every item admitted to Process during the day completes
+  //    its work and ships (or defects) — including any whose entry tween
+  //    hasn't visually landed yet. Admission is decided at the turnout; the
+  //    animation never decides the logic. (Filtering on the parked phase here
+  //    let one slow frame at the tick strand the last arrival, carry two
+  //    items over, divert the next day's 9th, and lock the sim into routing
+  //    everything through the backlog — the 9-in/10-cap "balk" that wasn't.)
+  const completing = state.inProcess.slice();
   for (const id of completing) {
     const idx = state.inProcess.indexOf(id);
     if (idx >= 0) state.inProcess.splice(idx, 1);
@@ -570,8 +570,14 @@ function simTick(P) {
   }
   slotsAvailable -= reworkSlots;
 
-  // 2b. Backlog pull (FIFO of items actually parked in the box).
+  // 2b. Backlog pull (FIFO): items parked in the box, then items diverted
+  //     today that are still riding up the track — they were turned away
+  //     before the day ended, so they are in the queue by morning whether or
+  //     not the dot has landed. (Otherwise a late diverter lands after the
+  //     pull, the strict-FIFO gate sees a non-empty backlog, and every
+  //     arrival diverts from then on.)
   const eligibleBacklog = state.backlog.filter(id => state.items.get(id)?.phase === "IN_BACKLOG");
+  for (const it of state.items.values()) if (it.phase === "DIVERTING") eligibleBacklog.push(it.id);
   const pullCount = Math.min(slotsAvailable, eligibleBacklog.length);
   for (let i = 0; i < pullCount; i++) {
     const id = eligibleBacklog[i];
@@ -699,14 +705,19 @@ function handleTransitComplete(item, P) {
       // already waiting there (strict FIFO, no line-jumping past the queue).
       const slotsUsed = state.inProcess.length;
       const backlogEmpty = state.backlog.length === 0;
+      // Late arrivals get a shorter ride so the dot is parked before the day
+      // ends (the tick settles the logic either way; this keeps the picture
+      // honest).
+      const msLeft = P.dayMs - (performance.now() - state.lastTickMs);
+      const landByTick = d => Math.max(0.04 * P.dayMs, Math.min(d, msLeft - 40));
       if (slotsUsed < P.processRate && backlogEmpty) {
         setTransit(item, "ENTERING");
-        item.tweenDurationMs = 0.18 * P.dayMs;
+        item.tweenDurationMs = landByTick(0.18 * P.dayMs);
         state.inProcess.push(item.id);
         state.intakeSinceTick++;
       } else {
         setTransit(item, "DIVERTING");
-        item.tweenDurationMs = 0.2 * P.dayMs;
+        item.tweenDurationMs = landByTick(0.2 * P.dayMs);
         // Joins state.backlog when the DIVERTING tween completes — the box
         // list stays the single source of truth for "actually in the queue."
       }
